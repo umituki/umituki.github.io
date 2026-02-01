@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -32,7 +32,6 @@
     overflow: hidden;
   }
 
-  /* Background grid effect */
   body::before {
     content: '';
     position: fixed;
@@ -52,7 +51,6 @@
     max-width: 720px;
   }
 
-  /* Title */
   .title {
     font-family: 'Orbitron', sans-serif;
     font-size: 2.4rem;
@@ -72,7 +70,6 @@
     margin-bottom: 28px;
   }
 
-  /* Stats bar */
   .stats {
     display: flex;
     justify-content: space-between;
@@ -97,7 +94,6 @@
     color: var(--accent);
   }
 
-  /* Timer bar */
   .timer-track {
     width: 100%;
     height: 4px;
@@ -114,29 +110,40 @@
     transition: width 0.2s linear;
   }
 
-  /* Text display */
   .text-box {
     background: var(--surface);
     border: 1px solid rgba(0,240,255,0.15);
     border-radius: 10px;
     padding: 24px;
     margin-bottom: 16px;
-    min-height: 120px;
-    line-height: 2.2;
+    min-height: 130px;
+    line-height: 2.4;
     font-size: 1.05rem;
-    word-break: break-all;
+    word-break: break-word;
     position: relative;
+    overflow: hidden;
   }
+
   .char {
     color: var(--muted);
+    display: inline-block;
     transition: color 0.1s;
   }
   .char.correct { color: var(--correct); }
-  .char.wrong {
+
+  .char.shake {
     color: var(--wrong);
-    background: rgba(252,92,92,0.12);
-    border-radius: 2px;
+    text-shadow: 0 0 8px rgba(252,92,92,0.7), 0 0 20px rgba(252,92,92,0.4);
+    animation: errorPulse 0.35s ease-out forwards;
   }
+  @keyframes errorPulse {
+    0%   { transform: translateX(0); color: var(--wrong); text-shadow: 0 0 12px rgba(252,92,92,0.9), 0 0 28px rgba(252,92,92,0.5); }
+    25%  { transform: translateX(-3px); }
+    50%  { transform: translateX(3px); }
+    75%  { transform: translateX(-2px); }
+    100% { transform: translateX(0); color: var(--wrong); text-shadow: 0 0 6px rgba(252,92,92,0.5); }
+  }
+
   .char.current {
     color: var(--text);
     border-bottom: 2px solid var(--accent);
@@ -144,10 +151,9 @@
   }
   @keyframes blink {
     0%, 100% { border-color: var(--accent); }
-    50% { border-color: transparent; }
+    50%      { border-color: transparent; }
   }
 
-  /* Input (hidden but focusable) */
   .hidden-input {
     position: absolute;
     opacity: 0;
@@ -158,7 +164,6 @@
     font-size: 1px;
   }
 
-  /* Buttons */
   .btn-row { text-align: center; }
   .btn {
     font-family: 'Orbitron', sans-serif;
@@ -180,7 +185,6 @@
     box-shadow: 0 0 16px rgba(0,240,255,0.35);
   }
 
-  /* Overlay (start / result) */
   .overlay {
     position: fixed;
     inset: 0;
@@ -230,21 +234,21 @@
   .result-item .stat-label { margin-bottom: 4px; }
   .result-item .stat-value { font-size: 1.5rem; }
 
-  .hint { color: var(--muted); font-size: 0.7rem; letter-spacing: 1px; margin-top: 12px; }
+  .hint { color: var(--muted); font-size: 0.7rem; letter-spacing: 1px; margin-top: 12px; text-align: center; }
 </style>
 </head>
 <body>
 
-<!-- START OVERLAY -->
+<!-- START -->
 <div class="overlay" id="startOverlay">
   <div class="card">
     <h2>TYPECRAFT</h2>
-    <p>30秒で ローマ字テキストを<br>できるだけ正確に入力してください。<br><br>バックスペースで修正可能。<br>正確さとスピードが測定されます。</p>
+    <p>Type as many characters as you can in 30 seconds.<br><br>Mistakes must be corrected —<br>you cannot advance until the current character is typed correctly.</p>
     <div class="btn-row"><button class="btn" onclick="startGame()">START</button></div>
   </div>
 </div>
 
-<!-- RESULT OVERLAY -->
+<!-- RESULT -->
 <div class="overlay hidden" id="resultOverlay">
   <div class="card">
     <h2>RESULT</h2>
@@ -291,44 +295,59 @@
   <div class="btn-row" style="margin-top:8px;">
     <button class="btn" id="startBtn" onclick="startGame()">START</button>
   </div>
-  <p class="hint" style="text-align:center;margin-top:14px;">キーボード（英数字モード）で入力すると自動開始・バックスペースで修正可能</p>
+  <p class="hint" id="hintText">Start typing to begin</p>
 </div>
 
 <script>
-const WORDS_JP = [
-  "aieuo","kakikukeko","sashisuseso","tatichitsuteto","naninuneno",
-  "hahihuheho","mamimimemo","yayuyo","rarirurero","wakon",
-  "haru","natsu","aki","fuyu","sora",
-  "hana","kumo","yoru","hoshi","tsuki",
-  "yama","kawa","umi","ki","kaze",
-  "jikan","modoru","ima","hourete",
-  "iro","shizuka","tooi","koe","mizu",
-  "kusa","hikari","kurui","asa","yume",
-  "shinai","noberu","chikakunai","tsuyoi",
-  "nihongo","kakusetsu","tekisuto","denwa","pasokon",
-  "kiiroii","aoi","kuroi","shiroi","aka",
-  "kaisha","jimusho","shigoto","kyoto","osaka",
-  "densha","kuruma","himotori","basu","hikouki",
-  "taberu","nomu","aruku","hashiru","kaku",
-  "kotoba","satou","tanaka","suzuki","sato"
+const WORDS = [
+  "the","be","to","of","and","a","in","that","have","it",
+  "for","not","on","with","he","as","you","do","at","this",
+  "but","his","by","from","they","we","say","her","she","or",
+  "an","will","my","one","all","would","there","their","what","so",
+  "up","out","if","about","who","get","which","go","me","when",
+  "make","can","like","time","no","just","him","know","take","people",
+  "into","year","your","good","some","could","them","see","other","than",
+  "then","now","look","only","come","its","over","think","also","back",
+  "after","use","two","how","our","work","first","well","way","even",
+  "new","want","because","any","these","give","day","most","us","great",
+  "between","need","large","often","hand","high","place","hold","free","real",
+  "life","few","north","open","seem","together","next","white","children","begin",
+  "got","walk","example","ease","paper","group","always","music","those","both",
+  "mark","book","letter","until","mile","river","car","feet","care","second",
+  "enough","plain","girl","usual","young","ready","above","ever","red","list",
+  "though","feel","talk","bird","soon","body","dog","family","direct","pose",
+  "leave","song","measure","door","product","black","short","class","wind",
+  "question","happen","complete","ship","area","half","rock","order","fire","south",
+  "problem","piece","told","knew","pass","since","top","whole","king","space",
+  "heard","best","hour","better","true","during","hundred","remember","step","early",
+  "west","ground","interest","reach","fast","sing","listen","six",
+  "table","travel","less","morning","ten","simple","several","toward","war",
+  "lay","against","pattern","slow","center","love","person","money","serve","appear",
+  "road","map","science","rule","govern","pull","cold","notice","voice","unit",
+  "power","town","fine","certain","fly","lead","cry","dark","machine","note",
+  "wait","plan","figure","star","box","noun","field","rest","correct","able",
+  "pound","done","beauty","drive","stood","contain","front","teach","week","final",
+  "gave","green","quick","develop","ocean","warm","minute","strong",
+  "special","mind","behind","clear","tail","produce","fact","street","inch","lot",
+  "nothing","course","stay","wheel","full","force","blue","object","decide","surface"
 ];
 
 const TOTAL_TIME = 30;
-let currentText = '';
-let currentIndex = 0;
+let text = '';
+let idx = 0;
 let errors = 0;
 let correctChars = 0;
 let totalTyped = 0;
-let typedResults = []; // 各文字の正解/不正解を記録
 let gameActive = false;
 let startTime = null;
 let timerInterval = null;
 let timeLeft = TOTAL_TIME;
+let shaking = false;
 
 function generateText() {
   let t = '';
-  while (t.length < 200) {
-    t += WORDS_JP[Math.floor(Math.random() * WORDS_JP.length)] + ' ';
+  while (t.length < 300) {
+    t += WORDS[Math.floor(Math.random() * WORDS.length)] + ' ';
   }
   return t.trim();
 }
@@ -336,14 +355,12 @@ function generateText() {
 function renderText() {
   const box = document.getElementById('textBox');
   let html = '';
-  for (let i = 0; i < currentText.length; i++) {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i] === ' ' ? '&nbsp;' : text[i];
     let cls = 'char';
-    if (i < currentIndex) {
-      cls += typedResults[i] ? ' correct' : ' wrong';
-    } else if (i === currentIndex) {
-      cls += ' current';
-    }
-    html += `<span class="${cls}">${currentText[i] === ' ' ? '&nbsp;' : currentText[i]}</span>`;
+    if (i < idx) cls += ' correct';
+    else if (i === idx) cls += ' current';
+    html += `<span class="${cls}" id="c${i}">${ch}</span>`;
   }
   box.innerHTML = html + '<input class="hidden-input" id="hiddenInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
   document.getElementById('hiddenInput').addEventListener('keydown', onKeyDown);
@@ -351,62 +368,46 @@ function renderText() {
 }
 
 function onKeyDown(e) {
-  // IME compositionの中は無視
   if (e.composing) return;
-  // 印刷可能な1文字だけ受け付ける（バックスペース含む）
-  if (e.key === 'Backspace') {
-    e.preventDefault();
-    if (currentIndex > 0) {
-      currentIndex--;
-      typedResults.pop();
-      errors = Math.max(0, typedResults.filter(r => r === false).length);
-      updateStats();
-      updateSpans();
-    }
-    return;
-  }
-  if (e.key.length !== 1) return; // 修飾キーなどは無視
+  if (e.key.length !== 1) return;
   e.preventDefault();
 
-  if (!gameActive) {
-    startGame();
-    // startGameがrenderTextを呼んで新しいinputにイベント再登録されるため、
-    // この関数の残りの処理で最初の文字も記録する（currentIndexは既に0にリセット済み）
-  }
+  if (!gameActive) startGame();
+  if (shaking) return;
 
   totalTyped++;
-  const correct = (e.key === currentText[currentIndex]);
-  typedResults.push(correct);
-  if (correct) {
+
+  if (e.key === text[idx]) {
+    // ── 正解 ──
+    const span = document.getElementById('c' + idx);
+    if (span) span.className = 'char correct';
     correctChars++;
-  } else {
-    errors++;
-  }
-  currentIndex++;
+    idx++;
 
-  // テキストの終わりに達したら追加生成
-  if (currentIndex >= currentText.length) {
-    currentText += ' ' + generateText();
-  }
-  updateSpans();
-  updateStats();
-}
-
-function updateSpans() {
-  const spans = document.querySelectorAll('.char');
-  spans.forEach((span, i) => {
-    if (i < currentIndex) {
-      span.className = 'char ' + (typedResults[i] ? 'correct' : 'wrong');
-    } else if (i === currentIndex) {
-      span.className = 'char current';
+    if (idx >= text.length) {
+      text += ' ' + generateText();
+      renderText();
     } else {
-      span.className = 'char';
+      const next = document.getElementById('c' + idx);
+      if (next) next.className = 'char current';
     }
-  });
-  // カレント位置がスクリーン外に出たら再レンダー
-  if (spans[currentIndex]) {
-    spans[currentIndex].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  } else {
+    // ── 誤解: shake して同じ文字の再入力を求める ──
+    errors++;
+    shaking = true;
+    const span = document.getElementById('c' + idx);
+    if (span) {
+      span.className = 'char shake';
+      span.addEventListener('animationend', function handler() {
+        span.removeEventListener('animationend', handler);
+        span.className = 'char current';
+        shaking = false;
+      }, { once: true });
+    } else {
+      shaking = false;
+    }
   }
+  updateStats();
 }
 
 function updateStats() {
@@ -414,7 +415,6 @@ function updateStats() {
   const minutes = elapsed / 60 || 1;
   const wpm = Math.round((correctChars / 5) / minutes);
   const acc = totalTyped > 0 ? Math.round((correctChars / totalTyped) * 100) : 100;
-
   document.getElementById('wpm').textContent = wpm;
   document.getElementById('acc').textContent = acc + '%';
   document.getElementById('err').textContent = errors;
@@ -423,17 +423,17 @@ function updateStats() {
 function startGame() {
   if (gameActive) return;
   document.getElementById('startOverlay').classList.add('hidden');
-  currentText = generateText();
-  currentIndex = 0;
+  text = generateText();
+  idx = 0;
   errors = 0;
   correctChars = 0;
   totalTyped = 0;
-  typedResults = [];
+  shaking = false;
   timeLeft = TOTAL_TIME;
   gameActive = true;
   startTime = Date.now();
   document.getElementById('startBtn').style.display = 'none';
-  document.querySelector('.hint').style.display = 'none';
+  document.getElementById('hintText').style.display = 'none';
   renderText();
   document.getElementById('hiddenInput').focus();
 
@@ -448,9 +448,9 @@ function startGame() {
 function endGame() {
   clearInterval(timerInterval);
   gameActive = false;
+  shaking = false;
   const acc = totalTyped > 0 ? Math.round((correctChars / totalTyped) * 100) : 100;
   const wpm = Math.round((correctChars / 5) / (TOTAL_TIME / 60));
-
   document.getElementById('reswpm').textContent = wpm;
   document.getElementById('resacc').textContent = acc + '%';
   document.getElementById('rescor').textContent = correctChars;
@@ -459,13 +459,14 @@ function endGame() {
 }
 
 function resetGame() {
+  clearInterval(timerInterval);
   document.getElementById('resultOverlay').classList.add('hidden');
   gameActive = false;
-  currentIndex = 0;
+  idx = 0;
   errors = 0;
   correctChars = 0;
   totalTyped = 0;
-  typedResults = [];
+  shaking = false;
   timeLeft = TOTAL_TIME;
   document.getElementById('time').textContent = TOTAL_TIME;
   document.getElementById('timerFill').style.width = '100%';
@@ -473,13 +474,13 @@ function resetGame() {
   document.getElementById('acc').textContent = '100%';
   document.getElementById('err').textContent = '0';
   document.getElementById('startBtn').style.display = 'inline-block';
-  document.querySelector('.hint').style.display = 'block';
-  currentText = generateText();
+  document.getElementById('hintText').style.display = 'block';
+  text = generateText();
   renderText();
 }
 
 // Init
-currentText = generateText();
+text = generateText();
 renderText();
 </script>
 </body>
