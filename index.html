@@ -1,1 +1,464 @@
-hello world!
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TYPECRAFT</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111827;
+    --accent: #00f0ff;
+    --accent2: #ff6b6b;
+    --text: #e2e8f0;
+    --muted: #4a5568;
+    --correct: #48bb78;
+    --wrong: #fc5c5c;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Share Tech Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    overflow: hidden;
+  }
+
+  /* Background grid effect */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,240,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,240,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 720px;
+  }
+
+  /* Title */
+  .title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 2.4rem;
+    font-weight: 900;
+    text-align: center;
+    letter-spacing: 12px;
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(0,240,255,0.4);
+    margin-bottom: 8px;
+  }
+  .subtitle {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.75rem;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 28px;
+  }
+
+  /* Stats bar */
+  .stats {
+    display: flex;
+    justify-content: space-between;
+    background: var(--surface);
+    border: 1px solid rgba(0,240,255,0.15);
+    border-radius: 8px;
+    padding: 12px 20px;
+    margin-bottom: 16px;
+  }
+  .stat { text-align: center; }
+  .stat-label {
+    font-size: 0.6rem;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .stat-value {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  /* Timer bar */
+  .timer-track {
+    width: 100%;
+    height: 4px;
+    background: var(--surface);
+    border-radius: 2px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .timer-fill {
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    transition: width 0.2s linear;
+  }
+
+  /* Text display */
+  .text-box {
+    background: var(--surface);
+    border: 1px solid rgba(0,240,255,0.15);
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 16px;
+    min-height: 120px;
+    line-height: 2.2;
+    font-size: 1.05rem;
+    word-break: break-all;
+    position: relative;
+  }
+  .char {
+    color: var(--muted);
+    transition: color 0.1s;
+  }
+  .char.correct { color: var(--correct); }
+  .char.wrong {
+    color: var(--wrong);
+    background: rgba(252,92,92,0.12);
+    border-radius: 2px;
+  }
+  .char.current {
+    color: var(--text);
+    border-bottom: 2px solid var(--accent);
+    animation: blink 0.8s infinite;
+  }
+  @keyframes blink {
+    0%, 100% { border-color: var(--accent); }
+    50% { border-color: transparent; }
+  }
+
+  /* Input (hidden but focusable) */
+  .hidden-input {
+    position: absolute;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    top: 0; left: 0;
+    cursor: text;
+    font-size: 1px;
+  }
+
+  /* Buttons */
+  .btn-row { text-align: center; }
+  .btn {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px 32px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn:hover {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: 0 0 16px rgba(0,240,255,0.35);
+  }
+
+  /* Overlay (start / result) */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10,14,26,0.85);
+    backdrop-filter: blur(6px);
+  }
+  .overlay.hidden { display: none; }
+  .card {
+    background: var(--surface);
+    border: 1px solid rgba(0,240,255,0.2);
+    border-radius: 14px;
+    padding: 40px 48px;
+    text-align: center;
+    max-width: 380px;
+    width: 90%;
+    box-shadow: 0 0 40px rgba(0,240,255,0.08);
+  }
+  .card h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.4rem;
+    color: var(--accent);
+    margin-bottom: 12px;
+    letter-spacing: 4px;
+  }
+  .card p {
+    color: var(--muted);
+    font-size: 0.82rem;
+    line-height: 1.8;
+    margin-bottom: 20px;
+  }
+  .result-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .result-item {
+    background: rgba(0,240,255,0.05);
+    border: 1px solid rgba(0,240,255,0.1);
+    border-radius: 8px;
+    padding: 12px 8px;
+  }
+  .result-item .stat-label { margin-bottom: 4px; }
+  .result-item .stat-value { font-size: 1.5rem; }
+
+  .hint { color: var(--muted); font-size: 0.7rem; letter-spacing: 1px; margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<!-- START OVERLAY -->
+<div class="overlay" id="startOverlay">
+  <div class="card">
+    <h2>TYPECRAFT</h2>
+    <p>30秒で できるだけ正確に<br>テキストを入力してください。<br><br>正確さとスピードが測定されます。</p>
+    <div class="btn-row"><button class="btn" onclick="startGame()">START</button></div>
+  </div>
+</div>
+
+<!-- RESULT OVERLAY -->
+<div class="overlay hidden" id="resultOverlay">
+  <div class="card">
+    <h2>RESULT</h2>
+    <div class="result-grid">
+      <div class="result-item">
+        <div class="stat-label">WPM</div>
+        <div class="stat-value" id="reswpm">0</div>
+      </div>
+      <div class="result-item">
+        <div class="stat-label">Accuracy</div>
+        <div class="stat-value" id="resacc">0%</div>
+      </div>
+      <div class="result-item">
+        <div class="stat-label">Correct</div>
+        <div class="stat-value" id="rescor">0</div>
+      </div>
+      <div class="result-item">
+        <div class="stat-label">Errors</div>
+        <div class="stat-value" id="reserr">0</div>
+      </div>
+    </div>
+    <div class="btn-row"><button class="btn" onclick="resetGame()">RETRY</button></div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="container">
+  <div class="title">TYPECRAFT</div>
+  <div class="subtitle">Speed · Accuracy · Precision</div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-label">WPM</div><div class="stat-value" id="wpm">0</div></div>
+    <div class="stat"><div class="stat-label">Time</div><div class="stat-value" id="time">30</div></div>
+    <div class="stat"><div class="stat-label">Accuracy</div><div class="stat-value" id="acc">100%</div></div>
+    <div class="stat"><div class="stat-label">Errors</div><div class="stat-value" id="err">0</div></div>
+  </div>
+
+  <div class="timer-track"><div class="timer-fill" id="timerFill"></div></div>
+
+  <div class="text-box" id="textBox" onclick="document.getElementById('hiddenInput').focus()">
+    <input class="hidden-input" id="hiddenInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+  </div>
+
+  <div class="btn-row" style="margin-top:8px;">
+    <button class="btn" id="startBtn" onclick="startGame()">START</button>
+  </div>
+  <p class="hint" style="text-align:center;margin-top:14px;">キーボードで入力すると自動開始</p>
+</div>
+
+<script>
+const WORDS_JP = [
+  "あいうえお","かきくけこ","さしすせそ","たちつてと","なにぬねの",
+  "はひふへほ","まみむめも","やゆよ","らりるれろ","わをん",
+  "春の日","夏の海","秋の風","冬の雪","青い空",
+  "赤い花","白い雲","黒い夜","星の光","月の影",
+  "山の上","川のそば","海の波","木の葉","風のこと",
+  "時間は流れる","逆に戻ることはない","今のこの瞬間","二度と訪れない",
+  "空の色がある","静かな夜が続く","遠い場所へ","誰かの声が聞こえる",
+  "水の音が響く","草の香りがする","光がある場所","暗い部屋の中",
+  "新しい朝が来た","夢のような景色","実現したい夢","信じる力がある"
+];
+
+const TOTAL_TIME = 30;
+let currentText = '';
+let currentIndex = 0;
+let errors = 0;
+let correctChars = 0;
+let totalTyped = 0;
+let gameActive = false;
+let startTime = null;
+let timerInterval = null;
+let timeLeft = TOTAL_TIME;
+
+function generateText() {
+  let t = '';
+  while (t.length < 200) {
+    t += WORDS_JP[Math.floor(Math.random() * WORDS_JP.length)] + ' ';
+  }
+  return t.trim();
+}
+
+function renderText() {
+  const box = document.getElementById('textBox');
+  const input = document.getElementById('hiddenInput');
+  let html = '';
+  for (let i = 0; i < currentText.length; i++) {
+    let cls = 'char';
+    if (i < currentIndex) cls += ' correct';
+    else if (i === currentIndex) cls += ' current';
+    html += `<span class="${cls}">${currentText[i] === ' ' ? '&nbsp;' : currentText[i]}</span>`;
+  }
+  // Keep input inside
+  box.innerHTML = html + '<input class="hidden-input" id="hiddenInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+  document.getElementById('hiddenInput').addEventListener('input', onInput);
+  document.getElementById('hiddenInput').addEventListener('keydown', onKeyDown);
+  if (gameActive) document.getElementById('hiddenInput').focus();
+}
+
+function onKeyDown(e) {
+  if (e.key === 'Backspace') {
+    e.preventDefault();
+    // no backspace allowed
+  }
+}
+
+function onInput(e) {
+  if (!gameActive) {
+    if (e.target.value.length > 0) startGame();
+    else return;
+  }
+  const typed = e.target.value;
+  if (typed.length === 0) return;
+  const ch = typed[typed.length - 1];
+  e.target.value = '';
+
+  totalTyped++;
+  if (ch === currentText[currentIndex]) {
+    correctChars++;
+    currentIndex++;
+    // mark correct
+    const spans = document.querySelectorAll('.char');
+    if (spans[currentIndex - 1]) {
+      spans[currentIndex - 1].className = 'char correct';
+    }
+    if (spans[currentIndex]) {
+      spans[currentIndex].className = 'char current';
+    }
+  } else {
+    errors++;
+    const spans = document.querySelectorAll('.char');
+    if (spans[currentIndex]) {
+      spans[currentIndex].className = 'char wrong';
+    }
+    updateStats();
+  }
+
+  // If reached end, generate more
+  if (currentIndex >= currentText.length) {
+    currentText += ' ' + generateText();
+    renderText();
+  }
+  updateStats();
+}
+
+function updateStats() {
+  const elapsed = gameActive ? (Date.now() - startTime) / 1000 : 0;
+  const minutes = elapsed / 60 || 1;
+  const wpm = Math.round((correctChars / 5) / minutes);
+  const acc = totalTyped > 0 ? Math.round((correctChars / totalTyped) * 100) : 100;
+
+  document.getElementById('wpm').textContent = wpm;
+  document.getElementById('acc').textContent = acc + '%';
+  document.getElementById('err').textContent = errors;
+}
+
+function startGame() {
+  if (gameActive) return;
+  document.getElementById('startOverlay').classList.add('hidden');
+  currentText = generateText();
+  currentIndex = 0;
+  errors = 0;
+  correctChars = 0;
+  totalTyped = 0;
+  timeLeft = TOTAL_TIME;
+  gameActive = true;
+  startTime = Date.now();
+  document.getElementById('startBtn').style.display = 'none';
+  document.querySelector('.hint').style.display = 'none';
+  renderText();
+  document.getElementById('hiddenInput').focus();
+
+  timerInterval = setInterval(() => {
+    timeLeft--;
+    document.getElementById('time').textContent = timeLeft;
+    document.getElementById('timerFill').style.width = (timeLeft / TOTAL_TIME * 100) + '%';
+    if (timeLeft <= 0) endGame();
+  }, 1000);
+}
+
+function endGame() {
+  clearInterval(timerInterval);
+  gameActive = false;
+  const acc = totalTyped > 0 ? Math.round((correctChars / totalTyped) * 100) : 100;
+  const wpm = Math.round((correctChars / 5) / (TOTAL_TIME / 60));
+
+  document.getElementById('reswpm').textContent = wpm;
+  document.getElementById('resacc').textContent = acc + '%';
+  document.getElementById('rescor').textContent = correctChars;
+  document.getElementById('reserr').textContent = errors;
+  document.getElementById('resultOverlay').classList.remove('hidden');
+}
+
+function resetGame() {
+  document.getElementById('resultOverlay').classList.add('hidden');
+  gameActive = false;
+  currentIndex = 0;
+  errors = 0;
+  correctChars = 0;
+  totalTyped = 0;
+  timeLeft = TOTAL_TIME;
+  document.getElementById('time').textContent = TOTAL_TIME;
+  document.getElementById('timerFill').style.width = '100%';
+  document.getElementById('wpm').textContent = '0';
+  document.getElementById('acc').textContent = '100%';
+  document.getElementById('err').textContent = '0';
+  document.getElementById('startBtn').style.display = 'inline-block';
+  document.querySelector('.hint').style.display = 'block';
+  currentText = generateText();
+  renderText();
+}
+
+// Init
+currentText = generateText();
+renderText();
+</script>
+</body>
+</html>
