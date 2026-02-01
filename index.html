@@ -239,7 +239,7 @@
 <div class="overlay" id="startOverlay">
   <div class="card">
     <h2>TYPECRAFT</h2>
-    <p>30秒で できるだけ正確に<br>テキストを入力してください。<br><br>正確さとスピードが測定されます。</p>
+    <p>30秒で ローマ字テキストを<br>できるだけ正確に入力してください。<br><br>バックスペースで修正可能。<br>正確さとスピードが測定されます。</p>
     <div class="btn-row"><button class="btn" onclick="startGame()">START</button></div>
   </div>
 </div>
@@ -291,20 +291,26 @@
   <div class="btn-row" style="margin-top:8px;">
     <button class="btn" id="startBtn" onclick="startGame()">START</button>
   </div>
-  <p class="hint" style="text-align:center;margin-top:14px;">キーボードで入力すると自動開始</p>
+  <p class="hint" style="text-align:center;margin-top:14px;">キーボード（英数字モード）で入力すると自動開始・バックスペースで修正可能</p>
 </div>
 
 <script>
 const WORDS_JP = [
-  "あいうえお","かきくけこ","さしすせそ","たちつてと","なにぬねの",
-  "はひふへほ","まみむめも","やゆよ","らりるれろ","わをん",
-  "春の日","夏の海","秋の風","冬の雪","青い空",
-  "赤い花","白い雲","黒い夜","星の光","月の影",
-  "山の上","川のそば","海の波","木の葉","風のこと",
-  "時間は流れる","逆に戻ることはない","今のこの瞬間","二度と訪れない",
-  "空の色がある","静かな夜が続く","遠い場所へ","誰かの声が聞こえる",
-  "水の音が響く","草の香りがする","光がある場所","暗い部屋の中",
-  "新しい朝が来た","夢のような景色","実現したい夢","信じる力がある"
+  "aieuo","kakikukeko","sashisuseso","tatichitsuteto","naninuneno",
+  "hahihuheho","mamimimemo","yayuyo","rarirurero","wakon",
+  "haru","natsu","aki","fuyu","sora",
+  "hana","kumo","yoru","hoshi","tsuki",
+  "yama","kawa","umi","ki","kaze",
+  "jikan","modoru","ima","hourete",
+  "iro","shizuka","tooi","koe","mizu",
+  "kusa","hikari","kurui","asa","yume",
+  "shinai","noberu","chikakunai","tsuyoi",
+  "nihongo","kakusetsu","tekisuto","denwa","pasokon",
+  "kiiroii","aoi","kuroi","shiroi","aka",
+  "kaisha","jimusho","shigoto","kyoto","osaka",
+  "densha","kuruma","himotori","basu","hikouki",
+  "taberu","nomu","aruku","hashiru","kaku",
+  "kotoba","satou","tanaka","suzuki","sato"
 ];
 
 const TOTAL_TIME = 30;
@@ -313,6 +319,7 @@ let currentIndex = 0;
 let errors = 0;
 let correctChars = 0;
 let totalTyped = 0;
+let typedResults = []; // 各文字の正解/不正解を記録
 let gameActive = false;
 let startTime = null;
 let timerInterval = null;
@@ -328,65 +335,78 @@ function generateText() {
 
 function renderText() {
   const box = document.getElementById('textBox');
-  const input = document.getElementById('hiddenInput');
   let html = '';
   for (let i = 0; i < currentText.length; i++) {
     let cls = 'char';
-    if (i < currentIndex) cls += ' correct';
-    else if (i === currentIndex) cls += ' current';
+    if (i < currentIndex) {
+      cls += typedResults[i] ? ' correct' : ' wrong';
+    } else if (i === currentIndex) {
+      cls += ' current';
+    }
     html += `<span class="${cls}">${currentText[i] === ' ' ? '&nbsp;' : currentText[i]}</span>`;
   }
-  // Keep input inside
   box.innerHTML = html + '<input class="hidden-input" id="hiddenInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
-  document.getElementById('hiddenInput').addEventListener('input', onInput);
   document.getElementById('hiddenInput').addEventListener('keydown', onKeyDown);
   if (gameActive) document.getElementById('hiddenInput').focus();
 }
 
 function onKeyDown(e) {
+  // IME compositionの中は無視
+  if (e.composing) return;
+  // 印刷可能な1文字だけ受け付ける（バックスペース含む）
   if (e.key === 'Backspace') {
     e.preventDefault();
-    // no backspace allowed
+    if (currentIndex > 0) {
+      currentIndex--;
+      typedResults.pop();
+      errors = Math.max(0, typedResults.filter(r => r === false).length);
+      updateStats();
+      updateSpans();
+    }
+    return;
   }
-}
+  if (e.key.length !== 1) return; // 修飾キーなどは無視
+  e.preventDefault();
 
-function onInput(e) {
   if (!gameActive) {
-    if (e.target.value.length > 0) startGame();
-    else return;
+    startGame();
+    // startGameがrenderTextを呼んで新しいinputにイベント再登録されるため、
+    // この関数の残りの処理で最初の文字も記録する（currentIndexは既に0にリセット済み）
   }
-  const typed = e.target.value;
-  if (typed.length === 0) return;
-  const ch = typed[typed.length - 1];
-  e.target.value = '';
 
   totalTyped++;
-  if (ch === currentText[currentIndex]) {
+  const correct = (e.key === currentText[currentIndex]);
+  typedResults.push(correct);
+  if (correct) {
     correctChars++;
-    currentIndex++;
-    // mark correct
-    const spans = document.querySelectorAll('.char');
-    if (spans[currentIndex - 1]) {
-      spans[currentIndex - 1].className = 'char correct';
-    }
-    if (spans[currentIndex]) {
-      spans[currentIndex].className = 'char current';
-    }
   } else {
     errors++;
-    const spans = document.querySelectorAll('.char');
-    if (spans[currentIndex]) {
-      spans[currentIndex].className = 'char wrong';
-    }
-    updateStats();
   }
+  currentIndex++;
 
-  // If reached end, generate more
+  // テキストの終わりに達したら追加生成
   if (currentIndex >= currentText.length) {
     currentText += ' ' + generateText();
-    renderText();
   }
+  updateSpans();
   updateStats();
+}
+
+function updateSpans() {
+  const spans = document.querySelectorAll('.char');
+  spans.forEach((span, i) => {
+    if (i < currentIndex) {
+      span.className = 'char ' + (typedResults[i] ? 'correct' : 'wrong');
+    } else if (i === currentIndex) {
+      span.className = 'char current';
+    } else {
+      span.className = 'char';
+    }
+  });
+  // カレント位置がスクリーン外に出たら再レンダー
+  if (spans[currentIndex]) {
+    spans[currentIndex].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
 }
 
 function updateStats() {
@@ -408,6 +428,7 @@ function startGame() {
   errors = 0;
   correctChars = 0;
   totalTyped = 0;
+  typedResults = [];
   timeLeft = TOTAL_TIME;
   gameActive = true;
   startTime = Date.now();
@@ -444,6 +465,7 @@ function resetGame() {
   errors = 0;
   correctChars = 0;
   totalTyped = 0;
+  typedResults = [];
   timeLeft = TOTAL_TIME;
   document.getElementById('time').textContent = TOTAL_TIME;
   document.getElementById('timerFill').style.width = '100%';
