@@ -1,487 +1,3114 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TYPECRAFT</title>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #0a0e1a;
-    --surface: #111827;
-    --accent: #00f0ff;
-    --accent2: #ff6b6b;
-    --text: #e2e8f0;
-    --muted: #4a5568;
-    --correct: #48bb78;
-    --wrong: #fc5c5c;
-  }
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    font-family: 'Share Tech Mono', monospace;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-    overflow: hidden;
-  }
-
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(0,240,255,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,240,255,0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none;
-    z-index: 0;
-  }
-
-  .container {
-    position: relative;
-    z-index: 1;
-    width: 100%;
-    max-width: 720px;
-  }
-
-  .title {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 2.4rem;
-    font-weight: 900;
-    text-align: center;
-    letter-spacing: 12px;
-    color: var(--accent);
-    text-shadow: 0 0 20px rgba(0,240,255,0.4);
-    margin-bottom: 8px;
-  }
-  .subtitle {
-    text-align: center;
-    color: var(--muted);
-    font-size: 0.75rem;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    margin-bottom: 28px;
-  }
-
-  .stats {
-    display: flex;
-    justify-content: space-between;
-    background: var(--surface);
-    border: 1px solid rgba(0,240,255,0.15);
-    border-radius: 8px;
-    padding: 12px 20px;
-    margin-bottom: 16px;
-  }
-  .stat { text-align: center; }
-  .stat-label {
-    font-size: 0.6rem;
-    letter-spacing: 2px;
-    color: var(--muted);
-    text-transform: uppercase;
-    margin-bottom: 2px;
-  }
-  .stat-value {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 1.2rem;
-    font-weight: 700;
-    color: var(--accent);
-  }
-
-  .timer-track {
-    width: 100%;
-    height: 4px;
-    background: var(--surface);
-    border-radius: 2px;
-    margin-bottom: 16px;
-    overflow: hidden;
-  }
-  .timer-fill {
-    height: 100%;
-    width: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--accent2));
-    border-radius: 2px;
-    transition: width 0.2s linear;
-  }
-
-  .text-box {
-    background: var(--surface);
-    border: 1px solid rgba(0,240,255,0.15);
-    border-radius: 10px;
-    padding: 24px;
-    margin-bottom: 16px;
-    min-height: 130px;
-    line-height: 2.4;
-    font-size: 1.05rem;
-    word-break: break-word;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .char {
-    color: var(--muted);
-    display: inline-block;
-    transition: color 0.1s;
-  }
-  .char.correct { color: var(--correct); }
-
-  .char.shake {
-    color: var(--wrong);
-    text-shadow: 0 0 8px rgba(252,92,92,0.7), 0 0 20px rgba(252,92,92,0.4);
-    animation: errorPulse 0.35s ease-out forwards;
-  }
-  @keyframes errorPulse {
-    0%   { transform: translateX(0); color: var(--wrong); text-shadow: 0 0 12px rgba(252,92,92,0.9), 0 0 28px rgba(252,92,92,0.5); }
-    25%  { transform: translateX(-3px); }
-    50%  { transform: translateX(3px); }
-    75%  { transform: translateX(-2px); }
-    100% { transform: translateX(0); color: var(--wrong); text-shadow: 0 0 6px rgba(252,92,92,0.5); }
-  }
-
-  .char.current {
-    color: var(--text);
-    border-bottom: 2px solid var(--accent);
-    animation: blink 0.8s infinite;
-  }
-  @keyframes blink {
-    0%, 100% { border-color: var(--accent); }
-    50%      { border-color: transparent; }
-  }
-
-  .hidden-input {
-    position: absolute;
-    opacity: 0;
-    width: 100%;
-    height: 100%;
-    top: 0; left: 0;
-    cursor: text;
-    font-size: 1px;
-  }
-
-  .btn-row { text-align: center; }
-  .btn {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    background: transparent;
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 6px;
-    padding: 10px 32px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .btn:hover {
-    background: var(--accent);
-    color: var(--bg);
-    box-shadow: 0 0 16px rgba(0,240,255,0.35);
-  }
-
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(10,14,26,0.85);
-    backdrop-filter: blur(6px);
-  }
-  .overlay.hidden { display: none; }
-  .card {
-    background: var(--surface);
-    border: 1px solid rgba(0,240,255,0.2);
-    border-radius: 14px;
-    padding: 40px 48px;
-    text-align: center;
-    max-width: 380px;
-    width: 90%;
-    box-shadow: 0 0 40px rgba(0,240,255,0.08);
-  }
-  .card h2 {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 1.4rem;
-    color: var(--accent);
-    margin-bottom: 12px;
-    letter-spacing: 4px;
-  }
-  .card p {
-    color: var(--muted);
-    font-size: 0.82rem;
-    line-height: 1.8;
-    margin-bottom: 20px;
-  }
-  .result-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 24px;
-  }
-  .result-item {
-    background: rgba(0,240,255,0.05);
-    border: 1px solid rgba(0,240,255,0.1);
-    border-radius: 8px;
-    padding: 12px 8px;
-  }
-  .result-item .stat-label { margin-bottom: 4px; }
-  .result-item .stat-value { font-size: 1.5rem; }
-
-  .hint { color: var(--muted); font-size: 0.7rem; letter-spacing: 1px; margin-top: 12px; text-align: center; }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Auto Tile Mansion</title>
+  <style>
+    html, body { margin:0; height:100%; overflow:hidden; background:#0b0f14; }
+    canvas { display:block; width:100vw; height:100vh; cursor: crosshair; }
+    .hud{ position:fixed; color:#e9f2ff; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:rgba(10,15,22,.55); padding:10px 12px; border-radius:10px; backdrop-filter:blur(6px); border:1px solid rgba(140,180,255,.18); user-select:none; }
+    #lockInfo{ left:12px; top:12px; max-width:360px; }
+    #stats{ left:12px; bottom:12px; min-width:180px; }
+    .hud code{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;}
+    .warn{ color:#ffd27a; }
+  </style>
 </head>
 <body>
-
-<!-- START -->
-<div class="overlay" id="startOverlay">
-  <div class="card">
-    <h2>TYPECRAFT</h2>
-    <p>Type as many characters as you can in 30 seconds.<br><br>Mistakes must be corrected —<br>you cannot advance until the current character is typed correctly.</p>
-    <div class="btn-row"><button class="btn" onclick="startGame()">START</button></div>
-  </div>
-</div>
-
-<!-- RESULT -->
-<div class="overlay hidden" id="resultOverlay">
-  <div class="card">
-    <h2>RESULT</h2>
-    <div class="result-grid">
-      <div class="result-item">
-        <div class="stat-label">WPM</div>
-        <div class="stat-value" id="reswpm">0</div>
-      </div>
-      <div class="result-item">
-        <div class="stat-label">Accuracy</div>
-        <div class="stat-value" id="resacc">0%</div>
-      </div>
-      <div class="result-item">
-        <div class="stat-label">Correct</div>
-        <div class="stat-value" id="rescor">0</div>
-      </div>
-      <div class="result-item">
-        <div class="stat-label">Errors</div>
-        <div class="stat-value" id="reserr">0</div>
-      </div>
+  <div id="startScreen" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(7,10,14,0.92);z-index:30;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;min-width:220px;">
+      <div style="color:#e9f2ff;font:700 30px/1.2 system-ui,sans-serif;margin-bottom:10px;">ReGRIFE test</div>
+      <button data-difficulty="easy" style="width:220px;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.22);background:#24415e;color:#fff;cursor:pointer;">easy</button>
+      <button data-difficulty="normal" style="width:220px;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.22);background:#2a4a36;color:#fff;cursor:pointer;">normal</button>
+      <button data-difficulty="hard" style="width:220px;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.22);background:#5a2d2d;color:#fff;cursor:pointer;">hard</button>
     </div>
-    <div class="btn-row"><button class="btn" onclick="resetGame()">RETRY</button></div>
   </div>
-</div>
-
-<!-- MAIN -->
-<div class="container">
-  <div class="title">TYPECRAFT</div>
-  <div class="subtitle">Speed · Accuracy · Precision</div>
-
-  <div class="stats">
-    <div class="stat"><div class="stat-label">WPM</div><div class="stat-value" id="wpm">0</div></div>
-    <div class="stat"><div class="stat-label">Time</div><div class="stat-value" id="time">30</div></div>
-    <div class="stat"><div class="stat-label">Accuracy</div><div class="stat-value" id="acc">100%</div></div>
-    <div class="stat"><div class="stat-label">Errors</div><div class="stat-value" id="err">0</div></div>
-  </div>
-
-  <div class="timer-track"><div class="timer-fill" id="timerFill"></div></div>
-
-  <div class="text-box" id="textBox" onclick="document.getElementById('hiddenInput').focus()">
-    <input class="hidden-input" id="hiddenInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-  </div>
-
-  <div class="btn-row" style="margin-top:8px;">
-    <button class="btn" id="startBtn" onclick="startGame()">START</button>
-  </div>
-  <p class="hint" id="hintText">Start typing to begin</p>
-</div>
-
+  <div id="lockInfo" class="hud warn"></div>
+  <div id="stats" class="hud"></div>
+  <canvas id="c"></canvas>
 <script>
-const WORDS = [
-  "the","be","to","of","and","a","in","that","have","it",
-  "for","not","on","with","he","as","you","do","at","this",
-  "but","his","by","from","they","we","say","her","she","or",
-  "an","will","my","one","all","would","there","their","what","so",
-  "up","out","if","about","who","get","which","go","me","when",
-  "make","can","like","time","no","just","him","know","take","people",
-  "into","year","your","good","some","could","them","see","other","than",
-  "then","now","look","only","come","its","over","think","also","back",
-  "after","use","two","how","our","work","first","well","way","even",
-  "new","want","because","any","these","give","day","most","us","great",
-  "between","need","large","often","hand","high","place","hold","free","real",
-  "life","few","north","open","seem","together","next","white","children","begin",
-  "got","walk","example","ease","paper","group","always","music","those","both",
-  "mark","book","letter","until","mile","river","car","feet","care","second",
-  "enough","plain","girl","usual","young","ready","above","ever","red","list",
-  "though","feel","talk","bird","soon","body","dog","family","direct","pose",
-  "leave","song","measure","door","product","black","short","class","wind",
-  "question","happen","complete","ship","area","half","rock","order","fire","south",
-  "problem","piece","told","knew","pass","since","top","whole","king","space",
-  "heard","best","hour","better","true","during","hundred","remember","step","early",
-  "west","ground","interest","reach","fast","sing","listen","six",
-  "table","travel","less","morning","ten","simple","several","toward","war",
-  "lay","against","pattern","slow","center","love","person","money","serve","appear",
-  "road","map","science","rule","govern","pull","cold","notice","voice","unit",
-  "power","town","fine","certain","fly","lead","cry","dark","machine","note",
-  "wait","plan","figure","star","box","noun","field","rest","correct","able",
-  "pound","done","beauty","drive","stood","contain","front","teach","week","final",
-  "gave","green","quick","develop","ocean","warm","minute","strong",
-  "special","mind","behind","clear","tail","produce","fact","street","inch","lot",
-  "nothing","course","stay","wheel","full","force","blue","object","decide","surface"
-];
+(()=>{
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const statsEl = document.getElementById('stats');
+  const lockInfoEl = document.getElementById('lockInfo');
+  const startScreenEl = document.getElementById('startScreen');
 
-const TOTAL_TIME = 30;
-let text = '';
-let idx = 0;
-let errors = 0;
-let correctChars = 0;
-let totalTyped = 0;
-let gameActive = false;
-let startTime = null;
-let timerInterval = null;
-let timeLeft = TOTAL_TIME;
-let shaking = false;
+  // フォーカス（矢印キーのスクロール抑止）
+  canvas.tabIndex = 0;
+  canvas.style.outline = 'none';
+  canvas.addEventListener('pointerdown', () => canvas.focus());
 
-function generateText() {
-  let t = '';
-  while (t.length < 300) {
-    t += WORDS[Math.floor(Math.random() * WORDS.length)] + ' ';
+  function resize() {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  return t.trim();
-}
+  window.addEventListener('resize', resize);
 
-function renderText() {
-  const box = document.getElementById('textBox');
-  let html = '';
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i] === ' ' ? '&nbsp;' : text[i];
-    let cls = 'char';
-    if (i < idx) cls += ' correct';
-    else if (i === idx) cls += ' current';
-    html += `<span class="${cls}" id="c${i}">${ch}</span>`;
+  // ===== Map params =====
+  const TILE = 48;
+  const MAP_W = 50;
+  const MAP_H = 32;
+  const MIN_CORRIDOR_GAP = 4; // 廊下同士の最小距離制約（タイル）
+
+  // cell: 0=floor, 1=wall, 2=door
+  const CELL_FLOOR = 0;
+  const CELL_WALL  = 1;
+  const CELL_DOOR  = 2;
+
+  let map = [];
+  let corridor = [];   // boolean
+  let roomId = [];     // -1 if not in room
+  let roomCount = 0;
+  let rooms = [];      // {id,x0,y0,w,h,type}
+
+  // ===== Objects (props) =====
+  // 0 = none, 1 = blocked
+  let objOcc = [];
+  let objects = []; // {id,type,x,y,w,h,opened}
+  let nextObjId = 1;
+
+  function initObjects() {
+    objOcc = Array.from({length: MAP_H}, () => Array(MAP_W).fill(0));
+    objects = [];
+    nextObjId = 1;
   }
-  box.innerHTML = html + '<input class="hidden-input" id="hiddenInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
-  document.getElementById('hiddenInput').addEventListener('keydown', onKeyDown);
-  if (gameActive) document.getElementById('hiddenInput').focus();
-}
 
-function onKeyDown(e) {
-  if (e.composing) return;
-  if (e.key.length !== 1) return;
-  e.preventDefault();
+  function randInt(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
+  function choice(arr) { return arr[randInt(0, arr.length - 1)]; }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
-  if (!gameActive) startGame();
-  if (shaking) return;
+  // ===== Wood variations =====
+  let woodVar = [];
+  function regenWoodVar() {
+    woodVar = Array.from({length: MAP_H}, () => Array.from({length: MAP_W}, () => ({
+      hue: randInt(-6, 6),
+      grain: Math.random(),
+      plankShift: randInt(0, 10)
+    })));
+  }
 
-  totalTyped++;
+  function drawWoodTile(tx, ty) {
+    const v = woodVar[ty][tx];
+    const baseR = 110 + v.hue;
+    const baseG = 78 + Math.floor(v.hue * 0.6);
+    const baseB = 45;
+    ctx.fillStyle = `rgb(${baseR},${baseG},${baseB})`;
+    ctx.fillRect(tx * TILE, ty * TILE, TILE, TILE);
 
-  if (e.key === text[idx]) {
-    // ── 正解 ──
-    const span = document.getElementById('c' + idx);
-    if (span) span.className = 'char correct';
-    correctChars++;
-    idx++;
+    // plank seams
+    ctx.fillStyle = 'rgba(0,0,0,0.16)';
+    const s = v.plankShift;
+    ctx.fillRect(tx*TILE + Math.floor(TILE*0.33) + (s%3), ty*TILE, 2, TILE);
+    ctx.fillRect(tx*TILE + Math.floor(TILE*0.66) + ((s+1)%3), ty*TILE, 2, TILE);
 
-    if (idx >= text.length) {
-      text += ' ' + generateText();
-      renderText();
-    } else {
-      const next = document.getElementById('c' + idx);
-      if (next) next.className = 'char current';
+    // grain
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const y1 = ty*TILE + 12 + Math.floor(v.grain * 6);
+    const y2 = ty*TILE + 30 - Math.floor(v.grain * 5);
+    ctx.moveTo(tx*TILE + 6, y1);
+    ctx.lineTo(tx*TILE + TILE - 6, y1 - 2);
+    ctx.moveTo(tx*TILE + 6, y2);
+    ctx.lineTo(tx*TILE + TILE - 6, y2 + 2);
+    ctx.stroke();
+
+    // subtle edge
+    ctx.strokeStyle = 'rgba(0,0,0,0.14)';
+    ctx.strokeRect(tx*TILE + 0.5, ty*TILE + 0.5, TILE - 1, TILE - 1);
+  }
+
+  function drawWallTile(tx, ty) {
+    ctx.fillStyle = 'rgb(95,95,95)';
+    ctx.fillRect(tx*TILE, ty*TILE, TILE, TILE);
+
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.strokeRect(tx*TILE + 0.5, ty*TILE + 0.5, TILE - 1, TILE - 1);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.beginPath();
+    ctx.moveTo(tx*TILE + 2, ty*TILE + 2);
+    ctx.lineTo(tx*TILE + TILE - 2, ty*TILE + 2);
+    ctx.lineTo(tx*TILE + TILE - 2, ty*TILE + TILE - 2);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(0,0,0,0.10)';
+    ctx.fillRect(tx*TILE + 6, ty*TILE + 6, TILE - 12, TILE - 12);
+  }
+
+  function drawDoorTile(tx, ty) {
+    drawWoodTile(tx, ty);
+    const x = tx*TILE, y = ty*TILE;
+    ctx.fillStyle = 'rgba(60,35,18,0.85)';
+    ctx.fillRect(x + 10, y + 10, TILE - 20, TILE - 20);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 10.5, y + 10.5, TILE - 21, TILE - 21);
+    ctx.fillStyle = 'rgba(240,220,160,0.9)';
+    ctx.beginPath();
+    ctx.arc(x + TILE - 16, y + TILE/2, 3, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  function initGrids() {
+    map = Array.from({length: MAP_H}, () => Array(MAP_W).fill(CELL_WALL));
+    corridor = Array.from({length: MAP_H}, () => Array(MAP_W).fill(false));
+    roomId = Array.from({length: MAP_H}, () => Array(MAP_W).fill(-1));
+    roomCount = 0;
+    rooms = [];
+    initObjects();
+  }
+
+  function inBounds(x, y) { return x >= 0 && x < MAP_W && y >= 0 && y < MAP_H; }
+
+  // --- Step 1: corridor network (2-tile wide hall parts) ---
+  function carveCorridors() {
+    function carveRect(x0, y0, w, h) {
+      for (let y = y0; y < y0 + h; y++) {
+        for (let x = x0; x < x0 + w; x++) {
+          if (x <= 0 || y <= 0 || x >= MAP_W - 1 || y >= MAP_H - 1) continue;
+          map[y][x] = CELL_FLOOR;
+          corridor[y][x] = true;
+        }
+      }
     }
+
+    function carveHallH(x0, y0, len) {
+      len = Math.max(2, len);
+      x0 = clamp(x0, 1, MAP_W - 2);
+      y0 = clamp(y0, 1, MAP_H - 3);
+      const x1 = clamp(x0 + len, 1, MAP_W - 1);
+      carveRect(x0, y0, x1 - x0, 2);
+      return { x: x1 - 1, y: y0 };
+    }
+
+    function carveHallV(x0, y0, len) {
+      len = Math.max(2, len);
+      x0 = clamp(x0, 1, MAP_W - 3);
+      y0 = clamp(y0, 1, MAP_H - 2);
+      const y1 = clamp(y0 + len, 1, MAP_H - 1);
+      carveRect(x0, y0, 2, y1 - y0);
+      return { x: x0, y: y1 - 1 };
+    }
+
+    function carveCorner(x, y) { carveRect(x, y, 2, 2); }
+
+    function connectToNearby(x, y) {
+      const R = 6;
+      let best = null;
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          const tx = x + dx;
+          const ty = y + dy;
+          if (!inBounds(tx, ty)) continue;
+          if (!corridor[ty][tx]) continue;
+          const dist = Math.abs(dx) + Math.abs(dy);
+          if (best === null || dist < best.dist) best = { tx, ty, dist };
+        }
+      }
+      if (!best || best.dist === 0) return;
+
+      const ax = x, ay = y;
+      const bx = best.tx, by = best.ty;
+      const sx = clamp(Math.min(ax, bx), 1, MAP_W - 3);
+      const sy = clamp(Math.min(ay, by), 1, MAP_H - 3);
+
+      if (Math.random() < 0.5) {
+        carveHallH(sx, clamp(ay, 1, MAP_H - 3), Math.abs(bx - ax) + 2);
+        carveCorner(clamp(bx, 1, MAP_W - 3), clamp(ay, 1, MAP_H - 3));
+        carveHallV(clamp(bx, 1, MAP_W - 3), sy, Math.abs(by - ay) + 2);
+      } else {
+        carveHallV(clamp(ax, 1, MAP_W - 3), sy, Math.abs(by - ay) + 2);
+        carveCorner(clamp(ax, 1, MAP_W - 3), clamp(by, 1, MAP_H - 3));
+        carveHallH(sx, clamp(by, 1, MAP_H - 3), Math.abs(bx - ax) + 2);
+      }
+    }
+
+    // ===== Skeleton (main halls) =====
+    const y1 = clamp(Math.floor(MAP_H * 0.30), 2, MAP_H - 5);
+    let y2 = clamp(Math.floor(MAP_H * 0.70), 2, MAP_H - 5);
+    if (y2 - y1 < 10) y2 = clamp(y1 + 10, 2, MAP_H - 5);
+    const xMid = clamp(Math.floor(MAP_W * 0.50), 2, MAP_W - 5);
+
+    carveHallH(2, y1, MAP_W - 4);
+    carveHallH(2, y2, MAP_W - 4);
+    carveHallV(xMid, 2, MAP_H - 4);
+    carveCorner(xMid, y1);
+    carveCorner(xMid, y2);
+
+    // seed points
+    const seeds = [];
+    const step = 8;
+    for (let x = 4; x < MAP_W - 6; x += step) {
+      seeds.push({ x, y: y1 });
+      seeds.push({ x, y: y2 });
+    }
+    for (let y = 4; y < MAP_H - 6; y += step) {
+      seeds.push({ x: xMid, y });
+    }
+
+    // shuffle
+    for (let i = seeds.length - 1; i > 0; i--) {
+      const j = randInt(0, i);
+      [seeds[i], seeds[j]] = [seeds[j], seeds[i]];
+    }
+
+    // --- Minimum gap constraint ---
+    const MIN_GAP = MIN_CORRIDOR_GAP;
+
+    function inInterior(x, y) {
+      return x >= 1 && y >= 1 && x <= MAP_W - 2 && y <= MAP_H - 2;
+    }
+
+    function areaHasCorridor(x0, y0, x1, y1, allowFn) {
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          if (!inBounds(x, y)) continue;
+          if (!corridor[y][x]) continue;
+          if (allowFn && allowFn(x, y)) continue;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function allowNearSeed(x, y, sx, sy) {
+      return Math.abs(x - sx) <= 1 && Math.abs(y - sy) <= 1;
+    }
+
+    function rectTooClose(x0, y0, w, h, sx, sy) {
+      const ex0 = x0 - MIN_GAP;
+      const ey0 = y0 - MIN_GAP;
+      const ex1 = x0 + w - 1 + MIN_GAP;
+      const ey1 = y0 + h - 1 + MIN_GAP;
+      if (!inInterior(ex0, ey0) || !inInterior(ex1, ey1)) return true;
+      return areaHasCorridor(ex0, ey0, ex1, ey1, (x, y) => allowNearSeed(x, y, sx, sy));
+    }
+
+    const BRANCHES = randInt(5, 8);
+    const BRANCH_TRIES = 20;
+
+    for (let i = 0; i < BRANCHES && seeds.length; i++) {
+      const s = seeds.pop();
+      const seedX = clamp(s.x, 1, MAP_W - 3);
+      const seedY = clamp(s.y, 1, MAP_H - 3);
+      let placed = false;
+
+      for (let attempt = 0; attempt < BRANCH_TRIES && !placed; attempt++) {
+        const dirs = [
+          { axis: 'H', sign:  1 },
+          { axis: 'H', sign: -1 },
+          { axis: 'V', sign:  1 },
+          { axis: 'V', sign: -1 },
+        ];
+        const d = choice(dirs);
+
+        const len1 = randInt(7, 13);
+        let seg1;
+        if (d.axis === 'H') {
+          const x0 = d.sign > 0 ? seedX : seedX - (len1 - 1);
+          seg1 = { x0: clamp(x0, 1, MAP_W - 3), y0: seedY, w: len1, h: 2 };
+        } else {
+          const y0 = d.sign > 0 ? seedY : seedY - (len1 - 1);
+          seg1 = { x0: seedX, y0: clamp(y0, 1, MAP_H - 3), w: 2, h: len1 };
+        }
+        if (rectTooClose(seg1.x0, seg1.y0, seg1.w, seg1.h, seedX, seedY)) continue;
+
+        const len2 = randInt(5, 11);
+        let seg2;
+
+        if (d.axis === 'H') {
+          const endX = d.sign > 0 ? (seg1.x0 + seg1.w - 1) : seg1.x0;
+          const endY = seg1.y0;
+          const turnUp = Math.random() < 0.5;
+          const y0 = turnUp ? (endY - (len2 - 1)) : endY;
+          seg2 = { x0: clamp(endX, 1, MAP_W - 3), y0: clamp(y0, 1, MAP_H - 3), w: 2, h: len2 };
+          const corner = { x0: clamp(endX, 1, MAP_W - 3), y0: clamp(endY, 1, MAP_H - 3), w: 2, h: 2 };
+          if (rectTooClose(corner.x0, corner.y0, corner.w, corner.h, seedX, seedY)) continue;
+          if (rectTooClose(seg2.x0, seg2.y0, seg2.w, seg2.h, seedX, seedY)) continue;
+
+          carveHallH(seg1.x0, seg1.y0, seg1.w);
+          carveCorner(corner.x0, corner.y0);
+          carveHallV(seg2.x0, seg2.y0, seg2.h);
+
+          if (Math.random() < 0.55) {
+            connectToNearby(seg2.x0, clamp(seg2.y0 + Math.floor(seg2.h / 2), 1, MAP_H - 3));
+          }
+          placed = true;
+        } else {
+          const endX = seg1.x0;
+          const endY = d.sign > 0 ? (seg1.y0 + seg1.h - 1) : seg1.y0;
+          const turnLeft = Math.random() < 0.5;
+          const x0 = turnLeft ? (endX - (len2 - 1)) : endX;
+          seg2 = { x0: clamp(x0, 1, MAP_W - 3), y0: clamp(endY, 1, MAP_H - 3), w: len2, h: 2 };
+          const corner = { x0: clamp(endX, 1, MAP_W - 3), y0: clamp(endY, 1, MAP_H - 3), w: 2, h: 2 };
+          if (rectTooClose(corner.x0, corner.y0, corner.w, corner.h, seedX, seedY)) continue;
+          if (rectTooClose(seg2.x0, seg2.y0, seg2.w, seg2.h, seedX, seedY)) continue;
+
+          carveHallV(seg1.x0, seg1.y0, seg1.h);
+          carveCorner(corner.x0, corner.y0);
+          carveHallH(seg2.x0, seg2.y0, seg2.w);
+
+          if (Math.random() < 0.55) {
+            connectToNearby(clamp(seg2.x0 + Math.floor(seg2.w / 2), 1, MAP_W - 3), seg2.y0);
+          }
+          placed = true;
+        }
+      }
+    }
+
+    // outer walls
+    for (let xx = 0; xx < MAP_W; xx++) { map[0][xx] = CELL_WALL; map[MAP_H-1][xx] = CELL_WALL; }
+    for (let yy = 0; yy < MAP_H; yy++) { map[yy][0] = CELL_WALL; map[yy][MAP_W-1] = CELL_WALL; }
+  }
+
+  // --- Step 2: rooms (no doors yet) ---
+  function canPlaceRoom(x0, y0, w, h) {
+    for (let y = y0-1; y <= y0+h; y++) {
+      for (let x = x0-1; x <= x0+w; x++) {
+        if (x <= 0 || y <= 0 || x >= MAP_W-1 || y >= MAP_H-1) return false;
+        if (corridor[y][x]) return false;
+        if (roomId[y][x] !== -1) return false;
+      }
+    }
+
+    // door candidate (corridor 1 tile beyond wall)
+    let hasDoorCandidate = false;
+    for (let x = x0; x < x0+w; x++) {
+      if (map[y0-1][x] === CELL_WALL && map[y0-2]?.[x] === CELL_FLOOR) hasDoorCandidate = true;
+      if (map[y0+h][x] === CELL_WALL && map[y0+h+1]?.[x] === CELL_FLOOR) hasDoorCandidate = true;
+    }
+    for (let y = y0; y < y0+h; y++) {
+      if (map[y][x0-1] === CELL_WALL && map[y]?.[x0-2] === CELL_FLOOR) hasDoorCandidate = true;
+      if (map[y][x0+w] === CELL_WALL && map[y]?.[x0+w+1] === CELL_FLOOR) hasDoorCandidate = true;
+    }
+    return hasDoorCandidate;
+  }
+
+  function stampRoom(x0, y0, w, h, id) {
+    for (let y = y0; y < y0+h; y++) {
+      for (let x = x0; x < x0+w; x++) {
+        map[y][x] = CELL_FLOOR;
+        roomId[y][x] = id;
+      }
+    }
+  }
+
+  function placeRooms() {
+    const targets = [
+      {name:'small',  w:[4,6],  h:[4,6],  count:[5,7]},
+      {name:'large',  w:[7,10], h:[6,8],  count:[1,2]},
+      {name:'dining', w:[8,11], h:[5,7],  count:[1,1]},
+      {name:'bed',    w:[5,7],  h:[4,6],  count:[1,2]},
+      {name:'library',w:[6,8],  h:[5,7],  count:[1,2]},
+    ];
+
+    const desired = [];
+    for (const t of targets) {
+      const n = randInt(t.count[0], t.count[1]);
+      for (let i=0;i<n;i++) desired.push(t);
+    }
+    for (let i=desired.length-1;i>0;i--) {
+      const j = randInt(0,i);
+      [desired[i], desired[j]] = [desired[j], desired[i]];
+    }
+
+    for (const t of desired) {
+      let placed = false;
+      for (let tries = 0; tries < 400 && !placed; tries++) {
+        const w = randInt(t.w[0], t.w[1]);
+        const h = randInt(t.h[0], t.h[1]);
+        const x0 = randInt(2, MAP_W - w - 3);
+        const y0 = randInt(2, MAP_H - h - 3);
+        if (!canPlaceRoom(x0, y0, w, h)) continue;
+        const id = roomCount++;
+        stampRoom(x0, y0, w, h, id);
+        rooms.push({id, x0, y0, w, h, type: t.name});
+        placed = true;
+      }
+    }
+  }
+
+  // --- Step 3: doors ---
+  function generateDoors() {
+    const candidatesByRoom = new Map();
+    function addCandidate(rid, x, y) {
+      if (!candidatesByRoom.has(rid)) candidatesByRoom.set(rid, []);
+      candidatesByRoom.get(rid).push({x, y});
+    }
+
+    for (let y = 1; y < MAP_H-1; y++) {
+      for (let x = 1; x < MAP_W-1; x++) {
+        if (map[y][x] !== CELL_WALL) continue;
+
+        const nRoom = roomId[y-1][x];
+        const sRoom = roomId[y+1][x];
+        const nCor = corridor[y-1][x];
+        const sCor = corridor[y+1][x];
+        if (nCor && sRoom !== -1) addCandidate(sRoom, x, y);
+        if (sCor && nRoom !== -1) addCandidate(nRoom, x, y);
+
+        const wRoom = roomId[y][x-1];
+        const eRoom = roomId[y][x+1];
+        const wCor = corridor[y][x-1];
+        const eCor = corridor[y][x+1];
+        if (wCor && eRoom !== -1) addCandidate(eRoom, x, y);
+        if (eCor && wRoom !== -1) addCandidate(wRoom, x, y);
+      }
+    }
+
+    for (const [rid, list] of candidatesByRoom.entries()) {
+      const uniq = new Map();
+      for (const p of list) uniq.set(p.x + ',' + p.y, p);
+      const arr = Array.from(uniq.values());
+      if (arr.length === 0) continue;
+
+      const doorNum = arr.length >= 6 ? 2 : 1;
+      for (let k=0;k<doorNum;k++) {
+        const p = arr.splice(randInt(0, arr.length-1), 1)[0];
+        map[p.y][p.x] = CELL_DOOR;
+      }
+    }
+  }
+
+  // --- Post: remove corridor components unreachable from any door ---
+  function removeUnreachableCorridorComponents() {
+    const connected = Array.from({length: MAP_H}, () => Array(MAP_W).fill(false));
+    const q = [];
+
+    const DIR4 = [
+      {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}
+    ];
+
+    const isCorrTile = (x, y) => inBounds(x, y) && corridor[y][x] === true;
+    const isDoorTile = (x, y) => inBounds(x, y) && map[y][x] === CELL_DOOR;
+
+    // flood fill from doors
+    for (let y = 1; y < MAP_H-1; y++) {
+      for (let x = 1; x < MAP_W-1; x++) {
+        if (map[y][x] === CELL_DOOR) {
+          connected[y][x] = true;
+          q.push({x, y});
+        }
+      }
+    }
+
+    while (q.length) {
+      const cur = q.shift();
+      for (const d of DIR4) {
+        const nx = cur.x + d.dx;
+        const ny = cur.y + d.dy;
+        if (!inBounds(nx, ny)) continue;
+        if (connected[ny][nx]) continue;
+        if (!(isDoorTile(nx, ny) || isCorrTile(nx, ny))) continue;
+        connected[ny][nx] = true;
+        q.push({x:nx, y:ny});
+      }
+    }
+
+    // remove unreachable corridor
+    for (let y = 1; y < MAP_H-1; y++) {
+      for (let x = 1; x < MAP_W-1; x++) {
+        if (!corridor[y][x]) continue;
+        if (connected[y][x]) continue;
+        corridor[y][x] = false;
+        map[y][x] = CELL_WALL;
+      }
+    }
+
+    // remove doors that no longer touch corridor
+    for (let y = 1; y < MAP_H-1; y++) {
+      for (let x = 1; x < MAP_W-1; x++) {
+        if (map[y][x] !== CELL_DOOR) continue;
+        let touches = false;
+        for (const d of DIR4) {
+          const nx = x + d.dx;
+          const ny = y + d.dy;
+          if (isCorrTile(nx, ny)) { touches = true; break; }
+        }
+        if (!touches) map[y][x] = CELL_WALL;
+      }
+    }
+  }
+
+  // --- Furniture placement: after rooms are placed ---
+  const ROOM_FURNITURE_CHANCE = 0.92;
+
+  function placeFurnitureAfterRooms() {
+    function rollChestRarity() {
+      const r = Math.random();
+      if (r < 0.55) return 1;
+      if (r < 0.85) return 2;
+      if (r < 0.97) return 3;
+      return 4;
+    }
+    function canPlaceObjAt(x0, y0, w, h, rid) {
+      for (let y = y0; y < y0 + h; y++) {
+        for (let x = x0; x < x0 + w; x++) {
+          if (!inBounds(x, y)) return false;
+          if (roomId[y][x] !== rid) return false;
+          if (map[y][x] !== CELL_FLOOR) return false;
+          if (objOcc[y][x] !== 0) return false;
+        }
+      }
+      return true;
+    }
+
+    function isNearDoor(x0, y0, w, h, pad = 1) {
+      for (let y = y0 - pad; y <= y0 + h - 1 + pad; y++) {
+        for (let x = x0 - pad; x <= x0 + w - 1 + pad; x++) {
+          if (!inBounds(x, y)) continue;
+          if (map[y][x] === CELL_DOOR) return true;
+        }
+      }
+      return false;
+    }
+
+    function touchesWall(x0, y0, w, h) {
+      const dirs = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
+      for (let y = y0; y < y0 + h; y++) {
+        for (let x = x0; x < x0 + w; x++) {
+          for (const d of dirs) {
+            const nx = x + d.dx;
+            const ny = y + d.dy;
+            if (nx >= x0 && nx < x0 + w && ny >= y0 && ny < y0 + h) continue;
+            if (inBounds(nx, ny) && map[ny][nx] === CELL_WALL) return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function stampObj(type, x0, y0, w, h) {
+      const rarity = (type === 'chest') ? rollChestRarity() : 0;
+      const o = {
+        id: nextObjId++,
+        type,
+        x:x0, y:y0, w, h,
+        opened:false, unlocked:false, rarity,
+        unlockedAtMs: 0,
+        maxProgressEver: 0,
+        startRollDone: false,
+        rollResolvedMask: 0
+      };
+      objects.push(o);
+      for (let y = y0; y < y0 + h; y++) {
+        for (let x = x0; x < x0 + w; x++) objOcc[y][x] = 1;
+      }
+      return o;
+    }
+
+    function roomTiles(r) {
+      const tiles = [];
+      for (let y = r.y0; y < r.y0 + r.h; y++) {
+        for (let x = r.x0; x < r.x0 + r.w; x++) {
+          if (map[y][x] !== CELL_FLOOR) continue;
+          tiles.push({x, y});
+        }
+      }
+      return tiles;
+    }
+
+    for (const r of rooms) {
+      if (Math.random() > ROOM_FURNITURE_CHANCE) continue;
+
+      const tiles = roomTiles(r);
+      if (tiles.length < 12) continue;
+
+      let count = 2;
+      if (r.type === 'large' || r.type === 'dining') count = Math.random() < 0.7 ? 3 : 2;
+      if (r.type === 'library') count = Math.random() < 0.8 ? 3 : 2;
+
+      for (let i = 0; i < count; i++) {
+        const isWardrobe = Math.random() < 0.20;
+        const type = isWardrobe ? 'wardrobe' : 'chest';
+        const w = 1; // wardrobe is now 1x1
+        const h = 1;
+
+        let placed = false;
+        for (let t = 0; t < 180 && !placed; t++) {
+          const p = tiles[randInt(0, tiles.length - 1)];
+          const x0 = p.x;
+          const y0 = p.y;
+
+          if (canPlaceObjAt(x0, y0, w, h, r.id)) {
+            if (type === 'chest' && isNearDoor(x0, y0, w, h, 1)) continue;
+            if (type === 'wardrobe' && !touchesWall(x0, y0, w, h)) continue;
+            stampObj(type, x0, y0, w, h);
+            placed = true;
+          }
+        }
+      }
+    }
+  }
+
+  function placeAltarsAfterRooms() {
+    function canPlaceAt(x0, y0, rid) {
+      if (!inBounds(x0, y0)) return false;
+      if (roomId[y0][x0] !== rid) return false;
+      if (map[y0][x0] !== CELL_FLOOR) return false;
+      if (objOcc[y0][x0] !== 0) return false;
+      return true;
+    }
+
+    function stampAltar(x0, y0) {
+      const o = {
+        id: nextObjId++,
+        type: 'altar',
+        x: x0, y: y0, w: 1, h: 1,
+        opened: false,
+        unlocked: false,
+        rarity: 0,
+        progress: 0,
+        slots: 0,
+      };
+      objects.push(o);
+      objOcc[y0][x0] = 1;
+      return o;
+    }
+
+    const altarCount = 4;
+    let placed = 0;
+    const roomOrder = rooms.slice();
+    for (let i = roomOrder.length - 1; i > 0; i--) {
+      const j = randInt(0, i);
+      [roomOrder[i], roomOrder[j]] = [roomOrder[j], roomOrder[i]];
+    }
+
+    for (const r of roomOrder) {
+      if (placed >= altarCount) break;
+      let placedInThisRoom = false;
+      for (let tries = 0; tries < 200 && !placedInThisRoom; tries++) {
+        const x0 = randInt(r.x0, r.x0 + r.w - 1);
+        const y0 = randInt(r.y0, r.y0 + r.h - 1);
+        if (!canPlaceAt(x0, y0, r.id)) continue;
+        stampAltar(x0, y0);
+        placed++;
+        placedInThisRoom = true; // at most one altar per room
+      }
+    }
+  }
+
+  function allRoomsHaveAtLeastOneDoor() {
+    const hasDoor = new Map();
+    for (const r of rooms) hasDoor.set(r.id, false);
+
+    for (let y = 1; y < MAP_H - 1; y++) {
+      for (let x = 1; x < MAP_W - 1; x++) {
+        if (map[y][x] !== CELL_DOOR) continue;
+        const candidates = [roomId[y - 1][x], roomId[y + 1][x], roomId[y][x - 1], roomId[y][x + 1]];
+        for (const rid of candidates) {
+          if (rid !== -1 && hasDoor.has(rid)) hasDoor.set(rid, true);
+        }
+      }
+    }
+
+    for (const ok of hasDoor.values()) {
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  function generateMap() {
+    // Regenerate if any room ends up without a door.
+    for (let attempt = 0; attempt < 24; attempt++) {
+      initGrids();
+      carveCorridors();
+      placeRooms();
+      generateDoors();
+      removeUnreachableCorridorComponents();
+
+      if (!allRoomsHaveAtLeastOneDoor()) continue;
+
+      placeFurnitureAfterRooms();
+      placeAltarsAfterRooms();
+
+      // 外周保証
+      for (let x = 0; x < MAP_W; x++) { map[0][x] = CELL_WALL; map[MAP_H-1][x] = CELL_WALL; }
+      for (let y = 0; y < MAP_H; y++) { map[y][0] = CELL_WALL; map[y][MAP_W-1] = CELL_WALL; }
+      return;
+    }
+
+    // fallback (keep playable even if unlucky)
+    initGrids();
+    carveCorridors();
+    placeRooms();
+    generateDoors();
+    removeUnreachableCorridorComponents();
+    placeFurnitureAfterRooms();
+    placeAltarsAfterRooms();
+    for (let x = 0; x < MAP_W; x++) { map[0][x] = CELL_WALL; map[MAP_H-1][x] = CELL_WALL; }
+    for (let y = 0; y < MAP_H; y++) { map[y][0] = CELL_WALL; map[y][MAP_W-1] = CELL_WALL; }
+  }
+
+  // ===== Player =====
+  const player = { x: 0, y: 0, r: 14, speed: 198, dir: 0 };
+  const CHEST_INTERACT_RADIUS = TILE * 2;
+  const VISION_RADIUS = TILE * 2;
+  const FLASHLIGHT_RANGE = TILE * 7;
+  const FLASHLIGHT_SPREAD = Math.PI / 3;
+  const FLASHLIGHT_VISUAL_SCALE = 0.2;
+  const VIEW_SCALE = 1.5;
+  const DASH_SPEED_MULT = 1.2;
+  const DASH_STAMINA_PER_SEC = 10;
+  const STAMINA_RECOVER_PER_SEC = 10;
+  const GHOST_MAX = 2;
+  const GHOST_SPAWN_INTERVAL = 10;
+  const GHOST_SPAWN_CHANCE = 0.40;
+  const GHOST_SPEED = 58;
+  const STAMINA_HIDE_DELAY_MS = 1000;
+  const stamina = { value: 100, max: 100, lastChangedMs: 0 };
+  let flashlightOn = true;
+  let gameStarted = false;
+  let ghostSpeedScale = 1.0;
+  let ghostMaxActive = GHOST_MAX;
+  let zombieSpawnCount = 6;
+
+  function isWallCell(cx, cy) {
+    if (cy < 0 || cy >= MAP_H || cx < 0 || cx >= MAP_W) return true;
+    if (map[cy][cx] === CELL_WALL) return true;
+    if (objOcc[cy] && objOcc[cy][cx] === 1) return true;
+    return false;
+  }
+
+  function isSolidWorld(wx, wy) {
+    const cx = Math.floor(wx / TILE);
+    const cy = Math.floor(wy / TILE);
+    if (!inBounds(cx, cy)) return true;
+    if (map[cy][cx] === CELL_WALL) return true;
+    if (objOcc[cy] && objOcc[cy][cx] === 1) return true;
+    return false;
+  }
+
+  function isWallWorld(wx, wy) {
+    const cx = Math.floor(wx / TILE);
+    const cy = Math.floor(wy / TILE);
+    if (!inBounds(cx, cy)) return true;
+    return map[cy][cx] === CELL_WALL;
+  }
+
+  function canMoveTo(nx, ny) {
+    const r = player.r;
+    const minX = Math.floor((nx - r) / TILE);
+    const maxX = Math.floor((nx + r) / TILE);
+    const minY = Math.floor((ny - r) / TILE);
+    const maxY = Math.floor((ny + r) / TILE);
+
+    for (let cy = minY; cy <= maxY; cy++) {
+      for (let cx = minX; cx <= maxX; cx++) {
+        if (!isWallCell(cx, cy)) continue;
+
+        const rx = cx * TILE;
+        const ry = cy * TILE;
+        const rw = TILE;
+        const rh = TILE;
+
+        const closestX = Math.max(rx, Math.min(nx, rx + rw));
+        const closestY = Math.max(ry, Math.min(ny, ry + rh));
+        const dx = nx - closestX;
+        const dy = ny - closestY;
+        if (dx*dx + dy*dy < r*r) return false;
+      }
+    }
+    return true;
+  }
+
+  function placePlayerOnFloor() {
+    for (let tries = 0; tries < 8000; tries++) {
+      const cx = randInt(1, MAP_W - 2);
+      const cy = randInt(1, MAP_H - 2);
+      if (map[cy][cx] === CELL_WALL) continue;
+      if (objOcc[cy][cx] === 1) continue;
+      player.x = cx * TILE + TILE/2;
+      player.y = cy * TILE + TILE/2;
+      return;
+    }
+    player.x = TILE * 2 + TILE/2;
+    player.y = TILE * 2 + TILE/2;
+  }
+
+  // ===== Camera: player stays centered =====
+  function worldToScreen(wx, wy) {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    return { x: wx - player.x + cx, y: wy - player.y + cy };
+  }
+
+  function screenToWorld(sx, sy) {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    return { x: (sx - cx) / VIEW_SCALE + player.x, y: (sy - cy) / VIEW_SCALE + player.y };
+  }
+
+  function getAimDir() {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    return Math.atan2(aim.y - cy, aim.x - cx);
+  }
+
+  function getLightOriginWorld() {
+    const tipDist = player.r + 24 * FLASHLIGHT_VISUAL_SCALE;
+    const dir = getAimDir();
+    return {
+      x: player.x + Math.cos(dir) * tipDist,
+      y: player.y + Math.sin(dir) * tipDist,
+    };
+  }
+
+  function findExitSpotNearObject(o) {
+    // Try 4-neighborhood around the object tile first, then 8-neighborhood.
+    const baseCx = Math.floor((o.x + o.w / 2));
+    const baseCy = Math.floor((o.y + o.h / 2));
+    const dirs = [
+      {dx: 1, dy: 0}, {dx:-1, dy: 0}, {dx: 0, dy: 1}, {dx: 0, dy:-1},
+      {dx: 1, dy: 1}, {dx: 1, dy:-1}, {dx:-1, dy: 1}, {dx:-1, dy:-1},
+    ];
+    for (const d of dirs) {
+      const tx = baseCx + d.dx;
+      const ty = baseCy + d.dy;
+      if (!inBounds(tx, ty)) continue;
+      if (map[ty][tx] === CELL_WALL) continue;
+      if (objOcc[ty][tx] === 1) continue;
+      const wx = tx * TILE + TILE / 2;
+      const wy = ty * TILE + TILE / 2;
+      if (canMoveTo(wx, wy)) return { x: wx, y: wy };
+    }
+    return null;
+  }
+
+  function getInventoryLayout() {
+    const slotSize = 54;
+    const gap = 10;
+    const totalW = INV_SLOTS * slotSize + (INV_SLOTS - 1) * gap;
+    const x0 = window.innerWidth / 2 - totalW / 2;
+    const y0 = window.innerHeight - 18 - slotSize;
+    return { x0, y0, slotSize, gap };
+  }
+
+  function getInventorySlotAt(sx, sy) {
+    const { x0, y0, slotSize, gap } = getInventoryLayout();
+    for (let i = 0; i < INV_SLOTS; i++) {
+      const x = x0 + i * (slotSize + gap);
+      const y = y0;
+      if (sx >= x && sx <= x + slotSize && sy >= y && sy <= y + slotSize) return i;
+    }
+    return null;
+  }
+
+  // ===== Input =====
+  const keys = new Set();
+
+  // aim (reticle)
+  const aim = { x: window.innerWidth/2, y: window.innerHeight/2 };
+  let cursorHidden = false;
+  let pointerLockTried = false;
+  let pointerLockActive = false;
+
+  // movement fallback for non-pointer-lock
+  let lastMouseClientX = window.innerWidth/2;
+  let lastMouseClientY = window.innerHeight/2;
+
+  function safeAllowsPointerLock() {
+    // 1) sandboxed iframe では基本的に禁止される
+    // 2) featurePolicy が取れる場合はそれを尊重
+    try {
+      const allows = document.featurePolicy?.allowsFeature?.('pointer-lock');
+      if (allows === false) return false;
+    } catch (_) {}
+    return true;
+  }
+
+  function tryRequestPointerLock() {
+    if (!canvas.requestPointerLock) return false;
+    if (!safeAllowsPointerLock()) return false;
+    try {
+      canvas.requestPointerLock();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setCursorHidden(on) {
+    cursorHidden = on;
+    canvas.style.cursor = on ? 'none' : 'crosshair';
+  }
+
+  function activateMouseCapture() {
+    // 1回だけ pointer lock を試す。ダメなら疑似（カーソル非表示＋レティクル）
+    if (!pointerLockTried) {
+      pointerLockTried = true;
+      const ok = tryRequestPointerLock();
+      if (!ok) {
+        setCursorHidden(true);
+        if (lockInfoEl) {
+          lockInfoEl.textContent = 'pointer lock が利用できない環境のため、疑似カーソル（レティクル）で動作中です。';
+        }
+      }
+    } else {
+      // 2回目以降は疑似で確実に隠す
+      setCursorHidden(true);
+    }
+  }
+
+  document.addEventListener('pointerlockchange', () => {
+    pointerLockActive = (document.pointerLockElement === canvas);
+    if (pointerLockActive) {
+      setCursorHidden(true);
+      if (lockInfoEl) lockInfoEl.textContent = '';
+    }
+  });
+
+  // hover/hold interaction
+  let hoveredChest = null; // object
+  let hoveredWardrobe = null; // object
+  const hold = { active:false, kind:'none', targetId:null, startMs:0, lastMs:0, progress:0, done:false, rollStep:0, durationSec:1 };
+  const objectVisAlpha = new Map();
+  let ghosts = [];
+  let nextGhostId = 1;
+  let ghostSpawnAcc = 0;
+  let jumpscareMs = 0;
+  let coins = [];
+  let nextCoinId = 1;
+  let coinCount = 0;
+  let gems = [];
+  let nextGemId = 1;
+  let gemCount = 0;
+  let sanity = 100;
+  let lives = 3;
+  let invulnMs = 0;
+  let playerHidden = false;
+  let hiddenWardrobeId = null;
+  let sanityShownInt = 100;
+  let heartbeat = { nextBeatT: 0, running: false };
+  let zombies = [];
+  let nextZombieId = 1;
+  let lastNoise = { x: 0, y: 0, tMs: -1 };
+  let hoveredAltar = null; // object
+  let gameCleared = false;
+  let gameOver = false;
+
+  // inventory: 4 fixed slots (drag to reorder), no overlap by design
+  const INV_SLOTS = 4;
+  const inventory = Array.from({length: INV_SLOTS}, () => null); // {type:'potion'}
+  let dragSlotIdx = null;
+  let dragActive = false;
+  let dragMouseX = 0;
+  let dragMouseY = 0;
+
+  let potions = [];
+  let nextPotionId = 1;
+
+  // prevent context menu
+  window.addEventListener('contextmenu', (e) => {
+    if (e.target === canvas) e.preventDefault();
+  });
+
+  function onKeyDown(e) {
+    const raw = e.key;
+    const k = raw.toLowerCase();
+    if (!gameStarted) return;
+    const isSpace = (raw === ' ' || k === 'space' || k === 'spacebar');
+    if (['arrowup','arrowdown','arrowleft','arrowright','w','a','s','d'].includes(k) || isSpace) e.preventDefault();
+    if (isSpace) {
+      if (!e.repeat) {
+        flashlightOn = !flashlightOn;
+        playFlashlightToggleSound(flashlightOn);
+      }
+      ensureAudio();
+      return;
+    }
+    keys.add(k);
+    if (k === 'r') regenerateAll();
+    ensureAudio();
+  }
+  function onKeyUp(e) { keys.delete(e.key.toLowerCase()); }
+
+  window.addEventListener('keydown', onKeyDown, { passive: false });
+  window.addEventListener('keyup', onKeyUp);
+
+  // mouse move: pointer lock or simulated
+  window.addEventListener('mousemove', (e) => {
+    const locked = pointerLockActive;
+
+    if (locked || cursorHidden) {
+      // prefer movementX/Y, fallback to client delta
+      const dx = (typeof e.movementX === 'number' ? e.movementX : 0) || (e.clientX - lastMouseClientX);
+      const dy = (typeof e.movementY === 'number' ? e.movementY : 0) || (e.clientY - lastMouseClientY);
+      aim.x = clamp(aim.x + dx, 0, window.innerWidth);
+      aim.y = clamp(aim.y + dy, 0, window.innerHeight);
+    } else {
+      aim.x = e.clientX;
+      aim.y = e.clientY;
+    }
+
+    lastMouseClientX = e.clientX;
+    lastMouseClientY = e.clientY;
+
+    // inventory drag cursor position
+    dragMouseX = e.clientX;
+    dragMouseY = e.clientY;
+  });
+
+  function cancelChestHold() {
+    hold.active = false;
+    hold.kind = 'none';
+    hold.targetId = null;
+    hold.progress = 0;
+    hold.done = false;
+    hold.rollStep = 0;
+    hold.lastMs = 0;
+    hold.durationSec = 1;
+    stopChestHoldSound();
+  }
+
+  function isHoldingChestNow() {
+    return !!(hold.active && hold.kind === 'chest' && !hold.done && hoveredChest && hoveredChest.type === 'chest' && hoveredChest.id === hold.targetId);
+  }
+
+  function syncChestHoldSound() {
+    if (isHoldingChestNow()) {
+      startChestHoldSound();
+      updateChestHoldSound(hold.progress);
+    } else {
+      stopChestHoldSound();
+    }
+  }
+
+  // right click: hide cursor & start hold if hovering chest
+  canvas.addEventListener('mousedown', (e) => {
+    if (!gameStarted) return;
+    if (e.button === 0) {
+      // inventory drag start
+      const slot = getInventorySlotAt(e.clientX, e.clientY);
+      if (slot !== null && inventory[slot]) {
+        dragActive = true;
+        dragSlotIdx = slot;
+        dragMouseX = e.clientX;
+        dragMouseY = e.clientY;
+        e.preventDefault();
+      }
+      return;
+    }
+    if (e.button !== 2) return;
+    e.preventDefault();
+    ensureAudio();
+
+    // 初回右クリックで「カーソルを消す」挙動
+    activateMouseCapture();
+
+    // start hold
+    const nowMs = performance.now();
+    if (playerHidden) {
+      // exit from hiding anywhere
+      hold.active = true;
+      hold.kind = 'exit';
+      hold.targetId = null;
+      hold.startMs = nowMs;
+      hold.lastMs = nowMs;
+      hold.progress = 0;
+      hold.done = false;
+      hold.durationSec = 0.5;
+      hold.rollStep = 0;
+      return;
+    }
+
+    if (hoveredAltar && hoveredAltar.type === 'altar') {
+      // first: embed gem if possible
+      if (gemCount > 0 && (hoveredAltar.slots || 0) < 4) {
+        gemCount -= 1;
+        hoveredAltar.slots = (hoveredAltar.slots || 0) + 1;
+        playAltarInsertSound();
+        registerNoise(player.x, player.y);
+        updateStats();
+        return;
+      }
+      // otherwise: charge altar (if cap > 0)
+      hold.active = true;
+      hold.kind = 'altar';
+      hold.targetId = hoveredAltar.id;
+      hold.startMs = nowMs;
+      hold.lastMs = nowMs;
+      hold.progress = hoveredAltar.progress || 0;
+      hold.done = false;
+      hold.durationSec = 1.0;
+      hold.rollStep = 0;
+      registerNoise(player.x, player.y);
+      return;
+    }
+
+    if (hoveredWardrobe && hoveredWardrobe.type === 'wardrobe') {
+      hold.active = true;
+      hold.kind = 'wardrobe';
+      hold.targetId = hoveredWardrobe.id;
+      hold.startMs = nowMs;
+      hold.lastMs = nowMs;
+      hold.progress = 0;
+      hold.done = false;
+      hold.durationSec = 0.5;
+      hold.rollStep = 0;
+      registerNoise(player.x, player.y);
+      return;
+    }
+
+    if (hoveredChest && hoveredChest.type === 'chest' && !hoveredChest.unlocked) {
+      hold.active = true;
+      hold.kind = 'chest';
+      hold.targetId = hoveredChest.id;
+      hold.startMs = nowMs;
+      hold.lastMs = nowMs;
+      hold.progress = 0;
+      hold.done = false;
+      hold.durationSec = 1;
+      hold.rollStep = Math.max(0, Math.min(3, Math.floor((hoveredChest.maxProgressEver || 0) * 4)));
+      if (!hoveredChest.startRollDone) {
+        hoveredChest.startRollDone = true;
+        tryUpgradeChestRarity(hoveredChest, 0.30);
+      }
+      registerNoise(player.x, player.y);
+      return;
+    }
+
+    cancelChestHold();
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) {
+      if (dragActive && dragSlotIdx !== null) {
+        const drop = getInventorySlotAt(e.clientX, e.clientY);
+        if (drop !== null && drop !== dragSlotIdx) {
+          const tmp = inventory[drop];
+          inventory[drop] = inventory[dragSlotIdx];
+          inventory[dragSlotIdx] = tmp;
+        }
+      }
+      dragActive = false;
+      dragSlotIdx = null;
+      return;
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('dblclick', (e) => {
+    const slot = getInventorySlotAt(e.clientX, e.clientY);
+    if (slot === null) return;
+    const it = inventory[slot];
+    if (!it) return;
+    if (it.type === 'potion') {
+      inventory[slot] = null;
+      playItemUseSound();
+      lives = Math.min(3, lives + 1);
+      sanity = Math.min(100, sanity + 10);
+      updateStats();
+    }
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (e.button !== 2) return;
+    if (!hold.done) {
+      cancelChestHold();
+    }
+    stopChestHoldSound();
+  });
+
+  window.addEventListener('blur', () => {
+    if (hold.active) cancelChestHold();
+    stopChestHoldSound();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (hold.active) cancelChestHold();
+      stopChestHoldSound();
+    }
+  });
+
+  // ===== Rendering =====
+  function drawMap() {
+    const topLeft = screenToWorld(0, 0);
+    const bottomRight = screenToWorld(window.innerWidth, window.innerHeight);
+
+    const startX = Math.max(0, Math.floor(topLeft.x / TILE) - 2);
+    const startY = Math.max(0, Math.floor(topLeft.y / TILE) - 2);
+    const endX = Math.min(MAP_W - 1, Math.floor(bottomRight.x / TILE) + 2);
+    const endY = Math.min(MAP_H - 1, Math.floor(bottomRight.y / TILE) + 2);
+
+    for (let y = startY; y <= endY; y++) {
+      for (let x = startX; x <= endX; x++) {
+        const sp = worldToScreen(x * TILE, y * TILE);
+        ctx.save();
+        ctx.translate(sp.x, sp.y);
+        ctx.translate(-x * TILE, -y * TILE);
+
+        const cell = map[y][x];
+        if (cell === CELL_WALL) drawWallTile(x, y);
+        else if (cell === CELL_DOOR) drawDoorTile(x, y);
+        else drawWoodTile(x, y);
+
+        ctx.restore();
+      }
+    }
+  }
+
+  function raycastWallDistance(originX, originY, angle, maxDist) {
+    const step = 8;
+    for (let d = 0; d <= maxDist; d += step) {
+      const x = originX + Math.cos(angle) * d;
+      const y = originY + Math.sin(angle) * d;
+      const cx = Math.floor(x / TILE);
+      const cy = Math.floor(y / TILE);
+      if (!inBounds(cx, cy)) return d;
+      if (map[cy][cx] === CELL_WALL) return d;
+    }
+    return maxDist;
+  }
+
+  function isWithinFlashlightCone(wx, wy) {
+    const origin = getLightOriginWorld();
+    const toX = wx - origin.x;
+    const toY = wy - origin.y;
+    const dist = Math.hypot(toX, toY);
+    if (dist > FLASHLIGHT_RANGE || dist < 0.001) return dist < 0.001;
+
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    let dirX = aim.x - cx;
+    let dirY = aim.y - cy;
+    let dirLen = Math.hypot(dirX, dirY);
+    if (dirLen < 0.001) {
+      dirX = Math.cos(player.dir);
+      dirY = Math.sin(player.dir);
+      dirLen = 1;
+    }
+    const dot = (toX * dirX + toY * dirY) / (dist * dirLen);
+    if (dot < Math.cos(FLASHLIGHT_SPREAD / 2)) return false;
+
+    const angleToTarget = Math.atan2(toY, toX);
+    const wallDist = raycastWallDistance(origin.x, origin.y, angleToTarget, FLASHLIGHT_RANGE);
+    return dist <= wallDist + 6;
+  }
+
+  function isObjectVisibleTarget(o) {
+    const ocx = (o.x + o.w / 2) * TILE;
+    const ocy = (o.y + o.h / 2) * TILE;
+    if (Math.hypot(ocx - player.x, ocy - player.y) <= VISION_RADIUS) return true;
+    return flashlightOn && isWithinFlashlightCone(ocx, ocy);
+  }
+
+  function updateObjectVisibility(dt) {
+    const fadePerSec = 2.8;
+    for (const o of objects) {
+      const targetVisible = isObjectVisibleTarget(o);
+      let a = objectVisAlpha.get(o.id);
+      if (a == null) a = targetVisible ? 1 : 0;
+      if (targetVisible) a = 1;
+      else a = Math.max(0, a - fadePerSec * dt);
+      objectVisAlpha.set(o.id, a);
+    }
+  }
+
+  function drawObjects() {
+    const topLeft = screenToWorld(0, 0);
+    const bottomRight = screenToWorld(window.innerWidth, window.innerHeight);
+
+    const startX = Math.max(0, Math.floor(topLeft.x / TILE) - 2);
+    const startY = Math.max(0, Math.floor(topLeft.y / TILE) - 2);
+    const endX = Math.min(MAP_W - 1, Math.floor(bottomRight.x / TILE) + 2);
+    const endY = Math.min(MAP_H - 1, Math.floor(bottomRight.y / TILE) + 2);
+
+    for (const o of objects) {
+      if (o.x + o.w < startX || o.x > endX || o.y + o.h < startY || o.y > endY) continue;
+      const alpha = objectVisAlpha.get(o.id) ?? (isObjectVisibleTarget(o) ? 1 : 0);
+      if (alpha <= 0.01) continue;
+
+      const wx = o.x * TILE;
+      const wy = o.y * TILE;
+      const sp = worldToScreen(wx, wy);
+      const sx = sp.x;
+      const sy = sp.y;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fillRect(sx + 6, sy + 10, o.w * TILE - 8, o.h * TILE - 8);
+
+      if (o.type === 'wardrobe') {
+        ctx.fillStyle = 'rgba(55,34,18,0.95)';
+        ctx.fillRect(sx + 4, sy + 4, o.w * TILE - 8, o.h * TILE - 8);
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx + 5, sy + 5, o.w * TILE - 10, o.h * TILE - 10);
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.beginPath();
+        ctx.moveTo(sx + TILE, sy + 6);
+        ctx.lineTo(sx + TILE, sy + o.h * TILE - 6);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(240,220,160,0.9)';
+        ctx.beginPath();
+        ctx.arc(sx + o.w * TILE - 18, sy + o.h * TILE / 2, 3, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (o.type === 'altar') {
+        const unlocked = !!o.unlocked;
+        ctx.fillStyle = unlocked ? 'rgba(120,160,255,0.45)' : 'rgba(80,100,140,0.75)';
+        ctx.fillRect(sx + 8, sy + 8, TILE - 16, TILE - 16);
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx + 8.5, sy + 8.5, TILE - 17, TILE - 17);
+
+        const slots = clamp(o.slots || 0, 0, 4);
+        for (let i = 0; i < slots; i++) {
+          const px = sx + 16 + i * 7;
+          const py = sy + TILE - 16;
+          ctx.fillStyle = 'rgba(170,120,255,0.9)';
+          ctx.fillRect(px, py, 5, 5);
+        }
+
+        const cap = Math.min(1, slots * 0.25);
+        const p = clamp(o.progress || 0, 0, 1);
+        ctx.fillStyle = 'rgba(255,255,255,0.10)';
+        ctx.fillRect(sx + 10, sy + 12, TILE - 20, 6);
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillRect(sx + 10, sy + 12, (TILE - 20) * cap, 6);
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        ctx.fillRect(sx + 10, sy + 12, (TILE - 20) * Math.min(cap, p), 6);
+
+        if (!unlocked && hoveredAltar && hoveredAltar.id === o.id) {
+          ctx.save();
+          ctx.shadowColor = 'rgba(255,255,255,0.55)';
+          ctx.shadowBlur = 10;
+          ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(sx + 7.5, sy + 7.5, TILE - 15, TILE - 15);
+          ctx.restore();
+        }
+      } else {
+        // chest
+        const opened = !!o.unlocked;
+        ctx.fillStyle = opened ? 'rgba(60,36,16,0.65)' : 'rgba(80,48,22,0.95)';
+        ctx.fillRect(sx + 10, sy + 10, TILE - 20, TILE - 20);
+        ctx.strokeStyle = opened ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.45)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx + 10.5, sy + 10.5, TILE - 21, TILE - 21);
+        if (!opened) {
+          ctx.fillStyle = 'rgba(210,190,120,0.9)';
+          ctx.fillRect(sx + TILE/2 - 6, sy + TILE/2 - 2, 12, 4);
+        }
+
+        // hover highlight (white glow outline)
+        if (!opened && hoveredChest && hoveredChest.id === o.id) {
+          ctx.save();
+          ctx.shadowColor = 'rgba(255,255,255,0.85)';
+          ctx.shadowBlur = 14;
+          ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+          ctx.lineWidth = 2.5;
+          ctx.strokeRect(sx + 9.5, sy + 9.5, TILE - 19, TILE - 19);
+          ctx.restore();
+        }
+      }
+      ctx.restore();
+    }
+  }
+
+  function isGhostVisible(g) {
+    if (Math.hypot(g.x - player.x, g.y - player.y) <= VISION_RADIUS) return true;
+    return flashlightOn && isWithinFlashlightCone(g.x, g.y);
+  }
+
+  function isZombieVisible(z) {
+    // same visibility rules as objects/ghosts
+    if (Math.hypot(z.x - player.x, z.y - player.y) <= VISION_RADIUS) return true;
+    return flashlightOn && isWithinFlashlightCone(z.x, z.y);
+  }
+
+  function drawGhosts() {
+    for (const g of ghosts) {
+      if (!isGhostVisible(g)) continue;
+      const sp = worldToScreen(g.x, g.y);
+      ctx.save();
+      ctx.globalAlpha = 0.82;
+      ctx.fillStyle = 'rgba(210,245,255,0.70)';
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, g.r, Math.PI, Math.PI * 2);
+      ctx.lineTo(sp.x + g.r, sp.y + g.r * 0.9);
+      ctx.lineTo(sp.x - g.r, sp.y + g.r * 0.9);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(20,25,35,0.9)';
+      ctx.beginPath();
+      ctx.arc(sp.x - g.r * 0.35, sp.y - g.r * 0.18, 2, 0, Math.PI * 2);
+      ctx.arc(sp.x + g.r * 0.35, sp.y - g.r * 0.18, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function spawnCoinsFromChest(chest) {
+    const rarity = chest.rarity || 1;
+    const count = 2 + rarity * 2;
+    const cx = (chest.x + chest.w / 2) * TILE;
+    const cy = (chest.y + chest.h / 2) * TILE;
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 90 + Math.random() * 120; // more scatter
+      coins.push({
+        id: nextCoinId++,
+        x: cx + (Math.random() - 0.5) * 8,
+        y: cy + (Math.random() - 0.5) * 8,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        r: 4 + Math.random() * 1.5,
+        life: 9,
+        absorb: false,
+        lock: 0.6 + Math.random() * 0.3, // cannot be collected until it settles
+      });
+    }
+
+    if (rarity >= 3 && Math.random() < 0.5) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 110 + Math.random() * 140;
+      gems.push({
+        id: nextGemId++,
+        x: cx + (Math.random() - 0.5) * 10,
+        y: cy + (Math.random() - 0.5) * 10,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        r: 6,
+        life: 12,
+        absorb: false,
+        lock: 0.9 + Math.random() * 0.4,
+      });
+    }
+
+    if (rarity >= 4 && Math.random() < 0.5) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 120 + Math.random() * 160;
+      potions.push({
+        id: nextPotionId++,
+        x: cx + (Math.random() - 0.5) * 10,
+        y: cy + (Math.random() - 0.5) * 10,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        r: 6,
+        life: 12,
+        absorb: false,
+        lock: 1.0 + Math.random() * 0.5,
+      });
+    }
+  }
+
+  function checkAllChestsCleared() {
+    const chests = objects.filter(o => o.type === 'chest');
+    if (chests.length === 0) return;
+    if (!chests.every(c => c.unlocked)) return;
+    playAllChestsResetSound();
+    for (const c of chests) {
+      c.unlocked = false;
+      c.opened = false;
+      c.unlockedAtMs = 0;
+      c.maxProgressEver = 0;
+      c.startRollDone = false;
+      c.rollResolvedMask = 0;
+    }
+  }
+
+  function updateCoins(dt) {
+    const next = [];
+    for (const c of coins) {
+      c.life -= dt;
+      c.vx *= Math.max(0, 1 - 3.2 * dt);
+      c.vy *= Math.max(0, 1 - 3.2 * dt);
+      const dx = player.x - c.x;
+      const dy = player.y - c.y;
+      const dist = Math.hypot(dx, dy);
+      c.lock -= dt;
+      if (!c.absorb && c.lock <= 0 && dist <= TILE * 1.5) c.absorb = true;
+      if (c.absorb) {
+        const pullSpd = 260;
+        const d = dist || 1;
+        c.vx = (dx / d) * pullSpd;
+        c.vy = (dy / d) * pullSpd;
+      }
+      const nx = c.x + c.vx * dt;
+      const ny = c.y + c.vy * dt;
+      if (!isWallWorld(nx, c.y)) c.x = nx;
+      else c.vx *= -0.35;
+      if (!isWallWorld(c.x, ny)) c.y = ny;
+      else c.vy *= -0.35;
+      if (Math.hypot(c.x - player.x, c.y - player.y) <= player.r + 1) {
+        playCoinPickupSound();
+        coinCount += 1;
+        updateStats();
+        continue;
+      }
+      if (c.life <= 0) continue;
+      next.push(c);
+    }
+    coins = next;
+  }
+
+  function checkAllAltarsCleared() {
+    if (gameCleared) return;
+    const altars = objects.filter(o => o.type === 'altar');
+    if (altars.length === 0) return;
+    if (!altars.every(a => a.unlocked)) return;
+    gameCleared = true;
+    playGameClearSound();
+  }
+
+  function updateHeartbeat(dt) {
+    if (!playerHidden || !heartbeat.running) return;
+    // sanity slowly recovers while hiding
+    const prevInt = Math.floor(sanity);
+    sanity = Math.min(100, sanity + 0.8 * dt);
+    const nextInt = Math.floor(sanity);
+    if (nextInt !== prevInt) updateStats();
+
+    // nearest ghost distance controls BPM
+    let minD = Infinity;
+    for (const g of ghosts) {
+      const d = Math.hypot(g.x - player.x, g.y - player.y);
+      if (d < minD) minD = d;
+    }
+    const norm = clamp(minD / (TILE * 10), 0, 1);
+    const bpm = 160 - 105 * norm; // 55..160
+    const interval = 60 / bpm;
+    const tNow = performance.now() / 1000;
+    if (heartbeat.nextBeatT <= 0) heartbeat.nextBeatT = tNow;
+    if (tNow >= heartbeat.nextBeatT) {
+      playHeartbeatBeat(1 - norm);
+      heartbeat.nextBeatT = tNow + interval;
+    }
+  }
+
+  function trySpawnZombies(count) {
+    zombies = [];
+    nextZombieId = 1;
+    for (let n = 0; n < count; n++) {
+      for (let i = 0; i < 800; i++) {
+        const cx = randInt(1, MAP_W - 2);
+        const cy = randInt(1, MAP_H - 2);
+        if (map[cy][cx] === CELL_WALL) continue;
+        if (objOcc[cy][cx] === 1) continue;
+        const x = cx * TILE + TILE / 2;
+        const y = cy * TILE + TILE / 2;
+        if (Math.hypot(x - player.x, y - player.y) < TILE * 6) continue;
+        zombies.push({ id: nextZombieId++, x, y, dir: Math.random() * Math.PI * 2, turnT: 0, stepAcc: 0, mode: 'corridor' });
+        break;
+      }
+    }
+  }
+
+  function updateZombies(dt) {
+    const nowMs = performance.now();
+    const heard = (nowMs - lastNoise.tMs) < 2500;
+    for (const z of zombies) {
+      if (z.mode == null) z.mode = 'corridor';
+      if (z.state == null) z.state = 'walk'; // walk|windup|charge
+      if (z.stateT == null) z.stateT = 0;
+      if (z.chargeDir == null) z.chargeDir = z.dir || 0;
+      if (z.roomT == null) z.roomT = 0;
+      if (z.targetRoomId == null) z.targetRoomId = -1;
+      if (z.avoidRoomId == null) z.avoidRoomId = -1;
+      if (z.hearT == null) z.hearT = 0;
+      if (z.hearX == null) z.hearX = z.x;
+      if (z.hearY == null) z.hearY = z.y;
+      if (z.attackCooldown == null) z.attackCooldown = 0;
+
+      z.attackCooldown = Math.max(0, z.attackCooldown - dt);
+
+      // vision: 6 tiles radius
+      const distToPlayer = Math.hypot(player.x - z.x, player.y - z.y);
+      const seesPlayer = !playerHidden && distToPlayer <= TILE * 6;
+
+      // hearing has priority when not seeing the player
+      if (!seesPlayer && heard) {
+        z.hearT = 2.5;
+        z.hearX = lastNoise.x;
+        z.hearY = lastNoise.y;
+      } else {
+        z.hearT = Math.max(0, z.hearT - dt);
+      }
+
+      // charge attack
+      if (seesPlayer && z.state === 'walk' && z.attackCooldown <= 0 && distToPlayer <= TILE * 3) {
+        z.state = 'windup';
+        z.stateT = 1.0;
+        z.chargeDir = Math.atan2(player.y - z.y, player.x - z.x);
+      }
+
+      let spd = 46;
+      let dir = z.dir || 0;
+      if (z.state === 'windup') {
+        z.stateT -= dt;
+        if (z.stateT <= 0) {
+          z.state = 'charge';
+          z.stateT = 2.0;
+        }
+        // stand still
+        spd = 0;
+        dir = z.chargeDir;
+      } else if (z.state === 'charge') {
+        z.stateT -= dt;
+        spd = 180;
+        dir = z.chargeDir;
+        if (z.stateT <= 0) {
+          z.state = 'walk';
+          z.attackCooldown = 2.0;
+        }
+      } else {
+        // walk state AI
+        if (seesPlayer) {
+          dir = Math.atan2(player.y - z.y, player.x - z.x);
+        } else if (z.hearT > 0) {
+          dir = Math.atan2(z.hearY - z.y, z.hearX - z.x);
+        } else {
+          // corridor/room cycle (lightweight)
+          const cx = Math.floor(z.x / TILE);
+          const cy = Math.floor(z.y / TILE);
+          const inRoom = (roomId[cy]?.[cx] ?? -1) !== -1;
+          const inCorr = corridor[cy]?.[cx] === true;
+
+          if (z.mode === 'corridor') {
+            if (inRoom) z.mode = 'room';
+            // if near a room, prefer entering
+            if (inCorr && Math.random() < 0.04) {
+              const adj = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
+              for (const d of adj) {
+                const nx = cx + d.dx, ny = cy + d.dy;
+                const rid = roomId[ny]?.[nx] ?? -1;
+                if (rid !== -1 && rid !== z.avoidRoomId) {
+                  z.mode = 'room';
+                  z.targetRoomId = rid;
+                  z.roomT = 3.5 + Math.random() * 3.0;
+                  break;
+                }
+              }
+            }
+            if (z.mode === 'corridor') {
+              if (z.turnT == null) z.turnT = 0;
+              z.turnT -= dt;
+              if (z.turnT <= 0) {
+                dir += (Math.random() - 0.5) * 1.2;
+                z.turnT = 1.0 + Math.random() * 2.0;
+              }
+            }
+          }
+
+          if (z.mode === 'room') {
+            z.roomT -= dt;
+            if (z.roomT <= 0) {
+              // leave room
+              z.mode = 'corridor';
+              z.avoidRoomId = z.targetRoomId;
+              z.avoidT = 3.0 + Math.random() * 3.0;
+              z.targetRoomId = -1;
+            } else {
+              // wander within room
+              if (z.turnT == null) z.turnT = 0;
+              z.turnT -= dt;
+              if (z.turnT <= 0) {
+                dir += (Math.random() - 0.5) * 1.4;
+                z.turnT = 0.6 + Math.random() * 1.2;
+              }
+            }
+          }
+
+          if (z.avoidT != null && z.avoidT > 0) {
+            z.avoidT -= dt;
+            if (z.avoidT <= 0) z.avoidRoomId = -1;
+          }
+        }
+      }
+
+      z.dir = dir;
+      const vx = Math.cos(dir) * spd;
+      const vy = Math.sin(dir) * spd;
+      const prevX = z.x, prevY = z.y;
+      const nx = z.x + vx * dt;
+      const ny = z.y + vy * dt;
+      if (spd > 0) {
+        if (canMoveTo(nx, z.y)) z.x = nx;
+        else z.dir += 0.8;
+        if (canMoveTo(z.x, ny)) z.y = ny;
+        else z.dir -= 0.8;
+      }
+
+      // damage player on touch (esp. during charge)
+      if (!playerHidden && invulnMs <= 0 && Math.hypot(z.x - player.x, z.y - player.y) <= player.r + 12) {
+        lives = Math.max(0, lives - 1);
+        invulnMs = 1000;
+        sanity = Math.max(0, sanity - 15);
+        updateStats();
+        jumpscareMs = nowMs + 420;
+        if (lives <= 0) gameOver = true;
+      }
+
+      const moved = Math.hypot(z.x - prevX, z.y - prevY);
+      z.stepAcc += moved;
+      if (z.stepAcc >= 120) {
+        z.stepAcc -= 120;
+        playZombieStep();
+      }
+    }
+  }
+
+  function drawZombies() {
+    for (const z of zombies) {
+      if (!isZombieVisible(z)) continue;
+      const sp = worldToScreen(z.x, z.y);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = 'rgba(255,255,255,0.75)';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, 16, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = 'rgba(110,160,120,0.85)';
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(30,35,40,0.85)';
+      ctx.beginPath();
+      ctx.arc(sp.x - 4, sp.y - 2, 2, 0, Math.PI * 2);
+      ctx.arc(sp.x + 4, sp.y - 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function drawCoins() {
+    for (const c of coins) {
+      const sp = worldToScreen(c.x, c.y);
+      const a = clamp(c.life / 1.5, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(246,210,86,0.95)';
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, c.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120,85,24,0.85)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function updateGems(dt) {
+    const next = [];
+    for (const g of gems) {
+      g.life -= dt;
+      g.vx *= Math.max(0, 1 - 2.8 * dt);
+      g.vy *= Math.max(0, 1 - 2.8 * dt);
+      const dx = player.x - g.x;
+      const dy = player.y - g.y;
+      const dist = Math.hypot(dx, dy);
+      g.lock -= dt;
+      if (!g.absorb && g.lock <= 0 && dist <= TILE * 1.5) g.absorb = true;
+      if (g.absorb) {
+        const pullSpd = 260;
+        const d = dist || 1;
+        g.vx = (dx / d) * pullSpd;
+        g.vy = (dy / d) * pullSpd;
+      }
+      const nx = g.x + g.vx * dt;
+      const ny = g.y + g.vy * dt;
+      if (!isWallWorld(nx, g.y)) g.x = nx;
+      else g.vx *= -0.25;
+      if (!isWallWorld(g.x, ny)) g.y = ny;
+      else g.vy *= -0.25;
+      if (Math.hypot(g.x - player.x, g.y - player.y) <= player.r + 1) {
+        playGemPickupSound();
+        gemCount += 1;
+        updateStats();
+        continue;
+      }
+      if (g.life <= 0) continue;
+      next.push(g);
+    }
+    gems = next;
+  }
+
+  function updatePotions(dt) {
+    const next = [];
+    for (const p of potions) {
+      p.life -= dt;
+      p.vx *= Math.max(0, 1 - 2.6 * dt);
+      p.vy *= Math.max(0, 1 - 2.6 * dt);
+      const dx = player.x - p.x;
+      const dy = player.y - p.y;
+      const dist = Math.hypot(dx, dy);
+      p.lock -= dt;
+      if (!p.absorb && p.lock <= 0 && dist <= TILE * 1.5) p.absorb = true;
+      if (p.absorb) {
+        const pullSpd = 260;
+        const d = dist || 1;
+        p.vx = (dx / d) * pullSpd;
+        p.vy = (dy / d) * pullSpd;
+      }
+      const nx = p.x + p.vx * dt;
+      const ny = p.y + p.vy * dt;
+      if (!isWallWorld(nx, p.y)) p.x = nx;
+      else p.vx *= -0.25;
+      if (!isWallWorld(p.x, ny)) p.y = ny;
+      else p.vy *= -0.25;
+
+      if (Math.hypot(p.x - player.x, p.y - player.y) <= player.r + 1) {
+        const idx = inventory.findIndex(it => !it);
+        if (idx !== -1) {
+          inventory[idx] = { type: 'potion' };
+          playPotionPickupSound();
+        } else {
+          // inventory full; don't pick up
+          next.push(p);
+          continue;
+        }
+        continue;
+      }
+
+      if (p.life <= 0) continue;
+      next.push(p);
+    }
+    potions = next;
+  }
+
+  function updateChestRecovery(nowMs) {
+    const RECOVER_MS = 35000;
+    for (const o of objects) {
+      if (o.type !== 'chest') continue;
+      if (!o.unlocked) continue;
+      if (!o.unlockedAtMs) continue;
+      if (nowMs - o.unlockedAtMs < RECOVER_MS) continue;
+      o.unlocked = false;
+      o.opened = false;
+      o.unlockedAtMs = 0;
+      o.maxProgressEver = 0;
+      o.startRollDone = false;
+      o.rollResolvedMask = 0;
+    }
+  }
+
+  function drawPotions() {
+    for (const p of potions) {
+      const vis = (Math.hypot(p.x - player.x, p.y - player.y) <= VISION_RADIUS) || (flashlightOn && isWithinFlashlightCone(p.x, p.y));
+      if (!vis) continue;
+      const sp = worldToScreen(p.x, p.y);
+      const a = clamp(p.life / 1.5, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(255,90,120,0.92)';
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(80,20,30,0.9)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawGems() {
+    for (const g of gems) {
+      const sp = worldToScreen(g.x, g.y);
+      const a = clamp(g.life / 1.5, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(170,120,255,0.92)';
+      ctx.beginPath();
+      ctx.moveTo(sp.x, sp.y - g.r);
+      ctx.lineTo(sp.x + g.r, sp.y);
+      ctx.lineTo(sp.x, sp.y + g.r);
+      ctx.lineTo(sp.x - g.r, sp.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(60,35,120,0.9)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawInventoryBar() {
+    const { x0, y0, slotSize, gap } = getInventoryLayout();
+    ctx.save();
+    for (let i = 0; i < INV_SLOTS; i++) {
+      const x = x0 + i * (slotSize + gap);
+      const y = y0;
+      ctx.fillStyle = 'rgba(10,14,20,0.65)';
+      ctx.fillRect(x, y, slotSize, slotSize);
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 1, y + 1, slotSize - 2, slotSize - 2);
+      const it = inventory[i];
+      if (!it) continue;
+      if (dragActive && dragSlotIdx === i) continue;
+      drawInventoryItem(it, x + slotSize / 2, y + slotSize / 2, slotSize);
+    }
+
+    if (dragActive && dragSlotIdx !== null && inventory[dragSlotIdx]) {
+      drawInventoryItem(inventory[dragSlotIdx], dragMouseX, dragMouseY, slotSize);
+    }
+
+    const hoverSlot = getInventorySlotAt(dragMouseX, dragMouseY);
+    if (hoverSlot !== null) {
+      const it = inventory[hoverSlot];
+      if (it && it.type === 'potion') {
+        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const totalW = INV_SLOTS * slotSize + (INV_SLOTS - 1) * gap;
+        ctx.fillText('ダブルクリックで使用', x0 + totalW / 2, y0 + slotSize + 8);
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawInventoryItem(it, cx, cy, slotSize) {
+    if (it.type === 'potion') {
+      ctx.fillStyle = 'rgba(255,90,120,0.95)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillRect(cx - 2, cy - 7, 4, 14);
+      ctx.fillRect(cx - 7, cy - 2, 14, 4);
+    }
+  }
+
+  function drawPlayer() {
+    if (playerHidden) return;
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+
+    // body
+    ctx.fillStyle = '#e7f0ff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, player.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // outline
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // flashlight direction
+    player.dir = getAimDir();
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(player.dir);
+
+    // handle
+    ctx.fillStyle = 'rgba(30,30,35,0.85)';
+    ctx.fillRect(player.r - 2, -4 * FLASHLIGHT_VISUAL_SCALE, 18 * FLASHLIGHT_VISUAL_SCALE, 8 * FLASHLIGHT_VISUAL_SCALE);
+
+    // head
+    ctx.fillStyle = 'rgba(220,220,230,0.85)';
+    ctx.fillRect(player.r + 14 * FLASHLIGHT_VISUAL_SCALE, -6 * FLASHLIGHT_VISUAL_SCALE, 10 * FLASHLIGHT_VISUAL_SCALE, 12 * FLASHLIGHT_VISUAL_SCALE);
+
+    // direction dot
+    ctx.fillStyle = 'rgba(25,35,50,0.9)';
+    ctx.beginPath();
+    ctx.arc(player.r - 3, 0, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawInteractRange() {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(160,220,255,0.28)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, CHEST_INTERACT_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(120,180,220,0.05)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, CHEST_INTERACT_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawVisibilityMask() {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const lightOriginWorld = getLightOriginWorld();
+    const lightOriginScreen = worldToScreen(lightOriginWorld.x, lightOriginWorld.y);
+    const lx = lightOriginScreen.x;
+    const ly = lightOriginScreen.y;
+    ctx.save();
+    // Make the whole scene darker than before.
+    ctx.fillStyle = 'rgba(0,0,0,0.86)';
+    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+
+    if (flashlightOn) {
+      const dir = Math.atan2(aim.y - cy, aim.x - cx);
+      const a0 = dir - FLASHLIGHT_SPREAD / 2;
+      const a1 = dir + FLASHLIGHT_SPREAD / 2;
+      const rayCount = 64;
+      const points = [];
+      for (let i = 0; i <= rayCount; i++) {
+        const t = i / rayCount;
+        const a = a0 + (a1 - a0) * t;
+        const d = raycastWallDistance(lightOriginWorld.x, lightOriginWorld.y, a, FLASHLIGHT_RANGE);
+        points.push({
+          x: lx + Math.cos(a) * d,
+          y: ly + Math.sin(a) * d,
+        });
+      }
+
+      ctx.globalCompositeOperation = 'destination-out';
+
+      // Brighten the flashlight cone.
+      ctx.fillStyle = 'rgba(0,0,0,0.05)';
+      ctx.beginPath();
+      ctx.moveTo(lx, ly);
+      for (const p of points) ctx.lineTo(p.x, p.y);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.globalCompositeOperation = 'source-over';
+      const whiteGrad = ctx.createRadialGradient(lx, ly, TILE * 0.2, lx, ly, FLASHLIGHT_RANGE);
+      whiteGrad.addColorStop(0, 'rgba(255,255,255,0.18)');
+      whiteGrad.addColorStop(0.75, 'rgba(245,250,255,0.08)');
+      whiteGrad.addColorStop(1, 'rgba(245,250,255,0.00)');
+      ctx.fillStyle = whiteGrad;
+      ctx.beginPath();
+      ctx.moveTo(lx, ly);
+      for (const p of points) ctx.lineTo(p.x, p.y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawStaminaBar(nowMs) {
+    if (nowMs - stamina.lastChangedMs > STAMINA_HIDE_DELAY_MS) return;
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const w = 64;
+    const h = 8;
+    const x = cx - w / 2;
+    const y = cy - player.r - 22;
+    const ratio = clamp(stamina.value / stamina.max, 0, 1);
+    ctx.save();
+    ctx.fillStyle = 'rgba(10,14,20,0.75)';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = 'rgba(95,225,120,0.92)';
+    ctx.fillRect(x + 1, y + 1, (w - 2) * ratio, h - 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    ctx.restore();
+  }
+
+  function drawJumpScareOverlay(nowMs) {
+    if (nowMs >= jumpscareMs) return;
+    const remain = (jumpscareMs - nowMs) / 420;
+    const a = clamp(remain, 0, 1);
+    ctx.save();
+    ctx.fillStyle = `rgba(255,40,40,${0.38 * a})`;
+    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+    ctx.fillStyle = `rgba(255,255,255,${0.75 * a})`;
+    ctx.font = 'bold 48px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('!!', window.innerWidth / 2, window.innerHeight / 2);
+    ctx.restore();
+  }
+
+  function drawReticle() {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(aim.x, aim.y, 8, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawChestProgress() {
+    if (playerHidden) return;
+
+    if (hoveredWardrobe && hoveredWardrobe.type === 'wardrobe' && !hoveredWardrobe.unlocked) {
+      const o = hoveredWardrobe;
+      const centerWorldX = (o.x + o.w/2) * TILE;
+      const centerWorldY = (o.y + o.h/2) * TILE;
+      const sp = worldToScreen(centerWorldX, centerWorldY);
+      const progress = (hold.kind === 'wardrobe' && hold.targetId === o.id) ? hold.progress : 0;
+      const r = 22;
+      ctx.save();
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = 'rgba(255,255,255,0.27)';
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      if (progress > 0) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.shadowColor = 'rgba(255,255,255,0.45)';
+        ctx.shadowBlur = 6;
+        ctx.beginPath();
+        const start = -Math.PI / 2;
+        const end = start + (Math.PI * 2) * Math.min(1, progress);
+        ctx.arc(sp.x, sp.y, r, start, end);
+        ctx.stroke();
+      }
+      ctx.restore();
+      return;
+    }
+
+    if (!hoveredChest || hoveredChest.type !== 'chest') return;
+    if (hoveredChest.unlocked) return;
+
+    const o = hoveredChest;
+    const centerWorldX = (o.x + o.w/2) * TILE;
+    const centerWorldY = (o.y + o.h/2) * TILE;
+    const sp = worldToScreen(centerWorldX, centerWorldY);
+
+    const progress = (hold.targetId === o.id) ? hold.progress : 0;
+
+    const r = 22;
+    ctx.save();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 25%ごとの抽選ライン（抽選済みは非表示）
+    for (let i = 1; i <= 3; i++) {
+      const bit = 1 << i;
+      if ((o.rollResolvedMask & bit) !== 0) continue;
+      const a = -Math.PI / 2 + (Math.PI * 2) * (i * 0.25);
+      const ix = sp.x + Math.cos(a) * (r - 6);
+      const iy = sp.y + Math.sin(a) * (r - 6);
+      const ox = sp.x + Math.cos(a) * (r + 6);
+      const oy = sp.y + Math.sin(a) * (r + 6);
+      ctx.strokeStyle = 'rgba(255,230,130,0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ix, iy);
+      ctx.lineTo(ox, oy);
+      ctx.stroke();
+    }
+
+    if (progress > 0) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.shadowColor = 'rgba(255,255,255,0.65)';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      const start = -Math.PI / 2;
+      const end = start + (Math.PI * 2) * Math.min(1, progress);
+      ctx.arc(sp.x, sp.y, r, start, end);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  function render(nowMs) {
+    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(VIEW_SCALE, VIEW_SCALE);
+    ctx.translate(-cx, -cy);
+    drawMap();
+    drawObjects();
+    drawCoins();
+    drawGems();
+    drawPotions();
+    drawGhosts();
+    drawZombies();
+    drawVisibilityMask();
+    drawInteractRange();
+    drawPlayer();
+    drawChestProgress();
+    ctx.restore();
+
+    drawStaminaBar(nowMs);
+    drawReticle();
+    drawJumpScareOverlay(nowMs);
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(0,0,window.innerWidth,window.innerHeight);
+    ctx.restore();
+    drawInventoryBar();
+
+    const altars = objects.filter(o => o.type === 'altar');
+    const remainAltars = altars.filter(a => !a.unlocked).length;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = 'bold 18px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`残り祭壇数 ${remainAltars}個`, window.innerWidth / 2, 12);
+    ctx.restore();
+
+    if (gameCleared) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.30)';
+      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.font = 'bold 44px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('CLEAR', window.innerWidth / 2, window.innerHeight / 2);
+      ctx.restore();
+    }
+
+    if (gameOver) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.font = 'bold 44px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('GAME OVER', window.innerWidth / 2, window.innerHeight / 2);
+      ctx.restore();
+    }
+  }
+
+  // ===== Interaction update =====
+  function updateHoverAndHold(now) {
+    function isChestInInteractRange(o) {
+      const cx = (o.x + o.w / 2) * TILE;
+      const cy = (o.y + o.h / 2) * TILE;
+      return Math.hypot(cx - player.x, cy - player.y) <= CHEST_INTERACT_RADIUS;
+    }
+    function isChestInteractable(o) {
+      if (!isChestInInteractRange(o)) return false;
+      if (o.unlocked) return false;
+      const cx = (o.x + o.w / 2) * TILE;
+      const cy = (o.y + o.h / 2) * TILE;
+      return isWithinFlashlightCone(cx, cy);
+    }
+    function isWardrobeInteractable(o) {
+      if (!o || o.type !== 'wardrobe') return false;
+      const cx = (o.x + o.w / 2) * TILE;
+      const cy = (o.y + o.h / 2) * TILE;
+      if (Math.hypot(cx - player.x, cy - player.y) > CHEST_INTERACT_RADIUS) return false;
+      // require it to be "seen" (close or within the light cone)
+      return (Math.hypot(cx - player.x, cy - player.y) <= VISION_RADIUS) || isWithinFlashlightCone(cx, cy);
+    }
+    function isAltarInteractable(o) {
+      if (!o || o.type !== 'altar') return false;
+      const cx = (o.x + o.w / 2) * TILE;
+      const cy = (o.y + o.h / 2) * TILE;
+      if (Math.hypot(cx - player.x, cy - player.y) > CHEST_INTERACT_RADIUS) return false;
+      return (Math.hypot(cx - player.x, cy - player.y) <= VISION_RADIUS) || isWithinFlashlightCone(cx, cy);
+    }
+
+    if (playerHidden) {
+      hoveredChest = null;
+      hoveredWardrobe = null;
+    } else {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    let ax = aim.x - cx;
+    let ay = aim.y - cy;
+    let alen = Math.hypot(ax, ay);
+    if (alen < 0.001) {
+      const dir = getAimDir();
+      ax = Math.cos(dir);
+      ay = Math.sin(dir);
+      alen = 1;
+    }
+
+    let found = null;
+    let bestScore = -Infinity;
+    let bestDist = Infinity;
+    for (const o of objects) {
+      if (!(o.type === 'chest' || o.type === 'wardrobe' || o.type === 'altar')) continue;
+      if (o.type === 'chest') { if (!isChestInteractable(o)) continue; }
+      else if (o.type === 'wardrobe') { if (!isWardrobeInteractable(o)) continue; }
+      else { if (!isAltarInteractable(o)) continue; }
+      const tx = (o.x + o.w / 2) * TILE - player.x;
+      const ty = (o.y + o.h / 2) * TILE - player.y;
+      const dist = Math.hypot(tx, ty);
+      if (dist < 0.001) continue;
+      const score = (tx * ax + ty * ay) / (dist * alen);
+      if (score > bestScore || (Math.abs(score - bestScore) < 1e-6 && dist < bestDist)) {
+        bestScore = score;
+        bestDist = dist;
+        found = o;
+      }
+    }
+    hoveredChest = (found && found.type === 'chest') ? found : null;
+    hoveredWardrobe = (found && found.type === 'wardrobe') ? found : null;
+    hoveredAltar = (found && found.type === 'altar') ? found : null;
+    }
+
+    if (hold.active) {
+      if (hold.kind === 'chest') {
+        if (!hoveredChest || hoveredChest.id !== hold.targetId) {
+        cancelChestHold();
+      } else {
+        const dtSec = Math.max(0, (now - hold.lastMs) / 1000);
+        hold.lastMs = now;
+        const speed = getChestUnlockSpeed(hoveredChest.rarity || 1);
+        hold.progress = Math.max(0, Math.min(1, hold.progress + dtSec * speed));
+        hoveredChest.maxProgressEver = Math.max(hoveredChest.maxProgressEver || 0, hold.progress);
+
+        while (hold.rollStep < 3 && hold.progress >= (hold.rollStep + 1) * 0.25) {
+          hold.rollStep++;
+          resolveChestQuarterRoll(hoveredChest, hold.rollStep);
+        }
+        if (hold.progress >= 1 && !hold.done) {
+          hold.done = true;
+          hold.active = false;
+          // after-process is later; mark opened for debug
+          hoveredChest.opened = true;
+          hoveredChest.unlocked = true;
+          hoveredChest.unlockedAtMs = performance.now();
+          spawnCoinsFromChest(hoveredChest);
+          stopChestHoldSound();
+          playChestOpenSound();
+          checkAllChestsCleared();
+        }
+      }
+      } else if (hold.kind === 'wardrobe') {
+        const target = objects.find(o => o.id === hold.targetId);
+        if (!target || target.type !== 'wardrobe') {
+          cancelChestHold();
+        } else {
+          const dtSec = Math.max(0, (now - hold.lastMs) / 1000);
+          hold.lastMs = now;
+          hold.progress = Math.max(0, Math.min(1, hold.progress + dtSec / (hold.durationSec || 0.5)));
+          if (hold.progress >= 1 && !hold.done) {
+            hold.done = true;
+            hold.active = false;
+            playWardrobeEnterSound();
+            playerHidden = true;
+            hiddenWardrobeId = target.id;
+            // snap player into the wardrobe position
+            player.x = (target.x + target.w / 2) * TILE;
+            player.y = (target.y + target.h / 2) * TILE;
+            heartbeat.running = true;
+            heartbeat.nextBeatT = 0;
+          }
+        }
+      } else if (hold.kind === 'exit') {
+        const dtSec = Math.max(0, (now - hold.lastMs) / 1000);
+        hold.lastMs = now;
+        hold.progress = Math.max(0, Math.min(1, hold.progress + dtSec / (hold.durationSec || 0.5)));
+        if (hold.progress >= 1 && !hold.done) {
+          hold.done = true;
+          hold.active = false;
+          const w = objects.find(o => o.id === hiddenWardrobeId);
+          const exitSpot = w ? findExitSpotNearObject(w) : null;
+          if (exitSpot) {
+            player.x = exitSpot.x;
+            player.y = exitSpot.y;
+          }
+          playerHidden = false;
+          hiddenWardrobeId = null;
+          heartbeat.running = false;
+        }
+      }
+      else if (hold.kind === 'altar') {
+        const target = objects.find(o => o.id === hold.targetId);
+        if (!target || target.type !== 'altar') {
+          cancelChestHold();
+        } else {
+          const dtSec = Math.max(0, (now - hold.lastMs) / 1000);
+          hold.lastMs = now;
+          const cap = Math.min(1, (target.slots || 0) * 0.25);
+          if (cap <= 0) {
+            hold.progress = 0;
+          } else {
+            target.progress = Math.min(cap, (target.progress || 0) + dtSec / (hold.durationSec || 1));
+            hold.progress = target.progress;
+          }
+          if ((target.progress || 0) >= 1 && !target.unlocked) {
+            target.unlocked = true;
+            playAltarUnlockSound();
+            checkAllAltarsCleared();
+          }
+        }
+      }
+    }
+  }
+
+  // ===== Footsteps (simple synth) =====
+  let audioCtx = null;
+  function ensureAudio() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audioCtx = new AC();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  }
+
+  function playStep() {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+
+    const o1 = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+
+    o1.type = 'sine';
+    o1.frequency.setValueAtTime(150, t);
+    o1.frequency.exponentialRampToValueAtTime(90, t + 0.05);
+
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.12, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.10);
+
+    o1.connect(g).connect(audioCtx.destination);
+    o1.start(t);
+    o1.stop(t + 0.12);
+  }
+
+  function playCoinPickupSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(980, t);
+    osc.frequency.exponentialRampToValueAtTime(1320, t + 0.04);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.03, t + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.065);
+  }
+
+  function playGemPickupSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(520, t);
+    osc.frequency.exponentialRampToValueAtTime(900, t + 0.06);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.035, t + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.10);
+  }
+
+  function playAltarInsertSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(420, t);
+    osc.frequency.exponentialRampToValueAtTime(280, t + 0.10);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.05, t + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.14);
+  }
+
+  function playPotionPickupSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(320, t);
+    osc.frequency.exponentialRampToValueAtTime(520, t + 0.08);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.05, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.13);
+  }
+
+  function playItemUseSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(820, t);
+    osc.frequency.exponentialRampToValueAtTime(380, t + 0.10);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.06, t + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.15);
+  }
+
+  function playAltarUnlockSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(330, t);
+    osc.frequency.exponentialRampToValueAtTime(660, t + 0.22);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.08, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.30);
+  }
+
+  function playGameClearSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(440, t);
+    osc.frequency.setValueAtTime(660, t + 0.12);
+    osc.frequency.setValueAtTime(880, t + 0.24);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.10, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.48);
+  }
+
+  function playGhostVanishSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const n = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    n.type = 'sine';
+    n.frequency.setValueAtTime(480, t);
+    n.frequency.exponentialRampToValueAtTime(160, t + 0.25);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.06, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+    n.connect(g).connect(audioCtx.destination);
+    n.start(t);
+    n.stop(t + 0.3);
+  }
+
+  function playAllChestsResetSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(520, t);
+    o.frequency.exponentialRampToValueAtTime(260, t + 0.22);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.09, t + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t);
+    o.stop(t + 0.26);
+  }
+
+  function playGhostSpawnSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(260, t);
+    osc.frequency.exponentialRampToValueAtTime(120, t + 0.12);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.05, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.17);
+  }
+
+  function playWardrobeEnterSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(220, t);
+    osc.frequency.exponentialRampToValueAtTime(120, t + 0.18);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.07, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.23);
+  }
+
+  function playHeartbeatBeat(intensity01) {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const p = clamp(intensity01, 0, 1);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(65 + 15 * p, t);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime((0.06 + 0.04 * p) * 2.0, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.13);
+  }
+
+  function registerNoise(wx, wy) {
+    lastNoise.x = wx;
+    lastNoise.y = wy;
+    lastNoise.tMs = performance.now();
+  }
+
+  function playZombieStep() {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const o1 = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o1.type = 'sine';
+    o1.frequency.setValueAtTime(110, t);
+    o1.frequency.exponentialRampToValueAtTime(80, t + 0.06);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.022, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o1.connect(g).connect(audioCtx.destination);
+    o1.start(t);
+    o1.stop(t + 0.13);
+  }
+
+  function getChestUnlockSpeed(rarity) {
+    if (rarity >= 4) return 0.42;
+    if (rarity === 3) return 0.56;
+    if (rarity === 2) return 0.74;
+    return 1.0;
+  }
+
+  function playRarityUpSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(840, t);
+    osc.frequency.exponentialRampToValueAtTime(980, t + 0.04);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.020, t + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.065);
+  }
+
+  function tryUpgradeChestRarity(chest, chance) {
+    if (!chest || chest.type !== 'chest') return false;
+    chest.rarity = chest.rarity || 1;
+    if (chest.rarity >= 4) return false;
+    if (Math.random() >= chance) return false;
+    chest.rarity = Math.min(4, chest.rarity + 1);
+    playRarityUpSound();
+    return true;
+  }
+
+  function resolveChestQuarterRoll(chest, quarterIdx) {
+    if (!chest || chest.type !== 'chest') return;
+    const bit = (1 << quarterIdx);
+    if ((chest.rollResolvedMask & bit) !== 0) return;
+    chest.rollResolvedMask |= bit;
+    tryUpgradeChestRarity(chest, 0.30);
+  }
+
+  function playFlashlightToggleSound(on) {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const filter = audioCtx.createBiquadFilter();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(on ? 2200 : 1800, t);
+    osc.frequency.exponentialRampToValueAtTime(on ? 1400 : 1100, t + 0.016);
+    filter.type = 'highpass';
+    filter.frequency.setValueAtTime(1000, t);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.07, t + 0.0015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+    osc.connect(filter).connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.032);
+  }
+
+  // ===== Chest holding sound (loop-ish) =====
+  // 右クリック長押し中だけ鳴る、軽い「カチャカチャ」風の音
+  let chestHoldSound = null; // {osc, gain, filter}
+
+  function startChestHoldSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    if (chestHoldSound) return; // already playing
+
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const filter = audioCtx.createBiquadFilter();
+
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(10, t);
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1450, t);
+    filter.Q.setValueAtTime(2.4, t);
+
+    // 立ち上がりは小さめ
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.042, t + 0.03);
+
+    osc.connect(filter).connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+
+    chestHoldSound = { osc, gain, filter };
+  }
+
+  function stopChestHoldSound() {
+    if (!audioCtx) return;
+    if (!chestHoldSound) return;
+
+    const t = audioCtx.currentTime;
+    try {
+      chestHoldSound.gain.gain.cancelScheduledValues(t);
+      chestHoldSound.gain.gain.setValueAtTime(chestHoldSound.gain.gain.value, t);
+      chestHoldSound.gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+      chestHoldSound.osc.stop(t + 0.06);
+    } catch (_) {
+      // ignore
+    }
+    chestHoldSound = null;
+  }
+
+  // hold 進行に応じて音のテンポと明るさを少し変える
+  function updateChestHoldSound(progress01) {
+    if (!audioCtx || !chestHoldSound) return;
+    const t = audioCtx.currentTime;
+    const p = clamp(progress01, 0, 1);
+    const pulseHz = 8 + 11 * p;
+    const cut = 1200 + 700 * p;
+    try {
+      chestHoldSound.osc.frequency.setTargetAtTime(pulseHz, t, 0.03);
+      chestHoldSound.filter.frequency.setTargetAtTime(cut, t, 0.03);
+    } catch (_) {}
+  }
+
+  // 開錠完了時の「ガチャ」音
+  function playChestOpenSound() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+
+    // 足音ベースの低い開錠音を2層で重ねる
+    const body = audioCtx.createOscillator();
+    const bodyGain = audioCtx.createGain();
+    body.type = 'sine';
+    body.frequency.setValueAtTime(112, t);
+    body.frequency.exponentialRampToValueAtTime(58, t + 0.14);
+    bodyGain.gain.setValueAtTime(0.0001, t);
+    bodyGain.gain.linearRampToValueAtTime(0.15, t + 0.012);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+    body.connect(bodyGain).connect(audioCtx.destination);
+    body.start(t);
+    body.stop(t + 0.38);
+
+    const sub = audioCtx.createOscillator();
+    const subGain = audioCtx.createGain();
+    sub.type = 'triangle';
+    sub.frequency.setValueAtTime(70, t + 0.01);
+    sub.frequency.exponentialRampToValueAtTime(40, t + 0.20);
+    subGain.gain.setValueAtTime(0.0001, t + 0.01);
+    subGain.gain.linearRampToValueAtTime(0.10, t + 0.03);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    sub.connect(subGain).connect(audioCtx.destination);
+    sub.start(t + 0.01);
+    sub.stop(t + 0.46);
+  }
+
+  let stepDistAcc = 0;
+  const STEP_DIST = 90; // px traveled per step
+  let wasMoving = false;
+
+  function setStaminaValue(next, nowMs) {
+    const v = clamp(next, 0, stamina.max);
+    if (Math.abs(v - stamina.value) > 0.0001) {
+      stamina.value = v;
+      stamina.lastChangedMs = nowMs;
+    }
+  }
+
+  function trySpawnGhost() {
+    if (ghosts.length >= ghostMaxActive) return;
+    if (Math.random() > GHOST_SPAWN_CHANCE) return;
+    for (let i = 0; i < 120; i++) {
+      const cx = randInt(1, MAP_W - 2);
+      const cy = randInt(1, MAP_H - 2);
+      if (map[cy][cx] === CELL_WALL) continue;
+      const x = cx * TILE + TILE / 2;
+      const y = cy * TILE + TILE / 2;
+      if (Math.hypot(x - player.x, y - player.y) < TILE * 6) continue;
+      ghosts.push({ id: nextGhostId++, x, y, r: 12, litMs: 0 });
+      playGhostSpawnSound();
+      return;
+    }
+  }
+
+  function updateGhosts(dt, nowMs) {
+    ghostSpawnAcc += dt;
+    while (ghostSpawnAcc >= GHOST_SPAWN_INTERVAL) {
+      ghostSpawnAcc -= GHOST_SPAWN_INTERVAL;
+      trySpawnGhost();
+    }
+
+    const remain = [];
+    for (const g of ghosts) {
+      const lit = flashlightOn && isWithinFlashlightCone(g.x, g.y);
+      if (lit) {
+        g.litMs += dt * 1000;
+        if (g.litMs >= 1000) {
+          playGhostVanishSound();
+          continue;
+        }
+      } else {
+        g.litMs = 0;
+        const dx = player.x - g.x;
+        const dy = player.y - g.y;
+        const d = Math.hypot(dx, dy) || 1;
+        g.x += (dx / d) * (GHOST_SPEED * ghostSpeedScale) * dt;
+        g.y += (dy / d) * (GHOST_SPEED * ghostSpeedScale) * dt;
+      }
+
+      if (Math.hypot(g.x - player.x, g.y - player.y) <= g.r + player.r) {
+        jumpscareMs = nowMs + 420;
+        sanity = Math.max(0, sanity - 20);
+        updateStats();
+        continue;
+      }
+      remain.push(g);
+    }
+    ghosts = remain;
+  }
+
+  // ===== Loop =====
+  let last = performance.now();
+  function tick(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+
+    if (!gameStarted) {
+      requestAnimationFrame(tick);
+      return;
+    }
+
+    updateHoverAndHold(now);
+    updateObjectVisibility(dt);
+    updateChestRecovery(now);
+    updateCoins(dt);
+    updateGems(dt);
+    updatePotions(dt);
+    updateGhosts(dt, now);
+    updateZombies(dt);
+    updateHeartbeat(dt);
+    syncChestHoldSound();
+    invulnMs = Math.max(0, invulnMs - dt * 1000);
+
+    let vx = 0, vy = 0;
+    if (keys.has('w') || keys.has('arrowup')) vy -= 1;
+    if (keys.has('s') || keys.has('arrowdown')) vy += 1;
+    if (keys.has('a') || keys.has('arrowleft')) vx -= 1;
+    if (keys.has('d') || keys.has('arrowright')) vx += 1;
+    const inputMoving = (vx !== 0 || vy !== 0);
+    const wantsDash = inputMoving && keys.has('shift') && stamina.value > 0.01 && !hold.active && !playerHidden;
+
+    const prevX = player.x;
+    const prevY = player.y;
+
+    if (inputMoving && !hold.active && !playerHidden) {
+      const len = Math.hypot(vx, vy);
+      vx /= len; vy /= len;
+      const spd = player.speed * (wantsDash ? DASH_SPEED_MULT : 1);
+      const nx = player.x + vx * spd * dt;
+      const ny = player.y + vy * spd * dt;
+      if (canMoveTo(nx, player.y)) player.x = nx;
+      if (canMoveTo(player.x, ny)) player.y = ny;
+    }
+
+    const moved = Math.hypot(player.x - prevX, player.y - prevY);
+    const movingNow = moved > 0.05;
+    const dashingNow = wantsDash && movingNow;
+
+    if (dashingNow) setStaminaValue(stamina.value - DASH_STAMINA_PER_SEC * dt, now);
+    else if (!movingNow) setStaminaValue(stamina.value + STAMINA_RECOVER_PER_SEC * dt, now);
+
+    // 歩き始めにまず1回鳴らす
+    if (movingNow && !wasMoving) {
+      playStep();
+      stepDistAcc = 0;
+    }
+
+    if (movingNow) {
+      stepDistAcc += moved;
+      if (stepDistAcc >= STEP_DIST) {
+        stepDistAcc -= STEP_DIST;
+        playStep();
+      }
+    } else {
+      stepDistAcc = Math.max(0, stepDistAcc - 80 * dt);
+    }
+    wasMoving = movingNow;
+
+    render(now);
+    requestAnimationFrame(tick);
+  }
+
+  function updateStats() {
+    if (!statsEl) return;
+    const s = Math.max(0, Math.floor(sanity));
+    sanityShownInt = s;
+    statsEl.textContent = `💰 ${coinCount}   🔮 ${gemCount}   ❤️ ${s}   ♥ ${lives}`;
+  }
+
+  function regenerateAll() {
+    cancelChestHold();
+    hoveredChest = null;
+    hoveredWardrobe = null;
+
+    generateMap();
+    ghosts = [];
+    coins = [];
+    gems = [];
+    potions = [];
+    coinCount = 0;
+    gemCount = 0;
+    sanity = 100;
+    lives = 3;
+    invulnMs = 0;
+    for (let i = 0; i < INV_SLOTS; i++) inventory[i] = null;
+    sanityShownInt = 100;
+    ghostSpawnAcc = 0;
+    jumpscareMs = 0;
+    objectVisAlpha.clear();
+    regenWoodVar();
+    placePlayerOnFloor();
+    playerHidden = false;
+    hiddenWardrobeId = null;
+    heartbeat.running = false;
+    heartbeat.nextBeatT = 0;
+    lastNoise.tMs = -1;
+    hoveredAltar = null;
+    gameCleared = false;
+    trySpawnZombies(zombieSpawnCount);
+    updateStats();
+    runSelfTests();
+  }
+
+  // ===== Self tests (console) =====
+  function assert(cond, msg) {
+    if (!cond) throw new Error('SelfTest failed: ' + msg);
+  }
+
+  function countTiles(predicate) {
+    let c = 0;
+    for (let y=0;y<MAP_H;y++) for (let x=0;x<MAP_W;x++) if (predicate(x,y)) c++;
+    return c;
+  }
+
+  function runSelfTests() {
+    // 基本的な健全性チェック（実行環境の差で落ちにくい範囲に限定）
+    assert(map.length === MAP_H && map[0].length === MAP_W, 'map size');
+    assert(corridor.length === MAP_H && corridor[0].length === MAP_W, 'corridor size');
+    assert(roomId.length === MAP_H && roomId[0].length === MAP_W, 'roomId size');
+    assert(objOcc.length === MAP_H && objOcc[0].length === MAP_W, 'objOcc size');
+
+    const floorCount = countTiles((x,y) => map[y][x] === CELL_FLOOR);
+    const doorCount  = countTiles((x,y) => map[y][x] === CELL_DOOR);
+    assert(floorCount > 100, 'enough floor tiles');
+    assert(doorCount >= 1, 'at least one door');
+
+    // プレイヤー初期位置は壁の上でない
+    const pcx = Math.floor(player.x / TILE);
+    const pcy = Math.floor(player.y / TILE);
+    assert(map[pcy][pcx] !== CELL_WALL, 'player not in wall');
+
+    // pointer lock は失敗しても例外が出ない設計
+    // （ここでは"試行しても落ちない"ことだけを保証）
+    try { tryRequestPointerLock(); } catch (e) { assert(false, 'pointer lock should not throw'); }
+
+    // 1つでもチェストがあれば、サイズ情報が妥当
+    const ch = objects.find(o => o.type === 'chest');
+    if (ch) {
+      assert(ch.w >= 1 && ch.h >= 1, 'chest size');
+      assert(inBounds(ch.x, ch.y), 'chest in bounds');
+    }
+
+    // テスト結果はコンソールだけ（画面は静かに）
+    console.log('[SelfTest] ok', { floorCount, doorCount, rooms: rooms.length, objects: objects.length });
+  }
+
+  // Init
+  resize();
+  if (startScreenEl) {
+    startScreenEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-difficulty]');
+      if (!btn) return;
+      const d = btn.getAttribute('data-difficulty');
+      if (d === 'easy') {
+        zombieSpawnCount = 4;
+        ghostSpeedScale = 0.7;
+        ghostMaxActive = 2;
+      } else if (d === 'hard') {
+        zombieSpawnCount = 8;
+        ghostSpeedScale = 1.0;
+        ghostMaxActive = 3;
+      } else {
+        zombieSpawnCount = 6;
+        ghostSpeedScale = 1.0;
+        ghostMaxActive = 2;
+      }
+      gameStarted = true;
+      startScreenEl.style.display = 'none';
+      regenerateAll();
+    });
   } else {
-    // ── 誤解: shake して同じ文字の再入力を求める ──
-    errors++;
-    shaking = true;
-    const span = document.getElementById('c' + idx);
-    if (span) {
-      span.className = 'char shake';
-      span.addEventListener('animationend', function handler() {
-        span.removeEventListener('animationend', handler);
-        span.className = 'char current';
-        shaking = false;
-      }, { once: true });
-    } else {
-      shaking = false;
-    }
+    gameStarted = true;
+    regenerateAll();
   }
-  updateStats();
-}
-
-function updateStats() {
-  const elapsed = gameActive ? (Date.now() - startTime) / 1000 : 0;
-  const minutes = elapsed / 60 || 1;
-  const wpm = Math.round((correctChars / 5) / minutes);
-  const acc = totalTyped > 0 ? Math.round((correctChars / totalTyped) * 100) : 100;
-  document.getElementById('wpm').textContent = wpm;
-  document.getElementById('acc').textContent = acc + '%';
-  document.getElementById('err').textContent = errors;
-}
-
-function startGame() {
-  if (gameActive) return;
-  document.getElementById('startOverlay').classList.add('hidden');
-  text = generateText();
-  idx = 0;
-  errors = 0;
-  correctChars = 0;
-  totalTyped = 0;
-  shaking = false;
-  timeLeft = TOTAL_TIME;
-  gameActive = true;
-  startTime = Date.now();
-  document.getElementById('startBtn').style.display = 'none';
-  document.getElementById('hintText').style.display = 'none';
-  renderText();
-  document.getElementById('hiddenInput').focus();
-
-  timerInterval = setInterval(() => {
-    timeLeft--;
-    document.getElementById('time').textContent = timeLeft;
-    document.getElementById('timerFill').style.width = (timeLeft / TOTAL_TIME * 100) + '%';
-    if (timeLeft <= 0) endGame();
-  }, 1000);
-}
-
-function endGame() {
-  clearInterval(timerInterval);
-  gameActive = false;
-  shaking = false;
-  const acc = totalTyped > 0 ? Math.round((correctChars / totalTyped) * 100) : 100;
-  const wpm = Math.round((correctChars / 5) / (TOTAL_TIME / 60));
-  document.getElementById('reswpm').textContent = wpm;
-  document.getElementById('resacc').textContent = acc + '%';
-  document.getElementById('rescor').textContent = correctChars;
-  document.getElementById('reserr').textContent = errors;
-  document.getElementById('resultOverlay').classList.remove('hidden');
-}
-
-function resetGame() {
-  clearInterval(timerInterval);
-  document.getElementById('resultOverlay').classList.add('hidden');
-  gameActive = false;
-  idx = 0;
-  errors = 0;
-  correctChars = 0;
-  totalTyped = 0;
-  shaking = false;
-  timeLeft = TOTAL_TIME;
-  document.getElementById('time').textContent = TOTAL_TIME;
-  document.getElementById('timerFill').style.width = '100%';
-  document.getElementById('wpm').textContent = '0';
-  document.getElementById('acc').textContent = '100%';
-  document.getElementById('err').textContent = '0';
-  document.getElementById('startBtn').style.display = 'inline-block';
-  document.getElementById('hintText').style.display = 'block';
-  text = generateText();
-  renderText();
-}
-
-// Init
-text = generateText();
-renderText();
+  setTimeout(() => canvas.focus(), 0);
+  requestAnimationFrame(tick);
+})();
 </script>
 </body>
 </html>
