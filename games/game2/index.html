@@ -394,10 +394,25 @@ function boardScore(board){
   return s;
 }
 // 揃った「3連」の組数。4連は3連を2つ含むので2組としてカウントする（得点計算と一致）。
+// shared コインを含む連は、連内の非shared実コインの多数派ownerにのみ帰属させる
+// （両者にダブルカウントすると終了判定が誤発動するため）
 function lineCount(board){
   const c=[0,0];
-  for(const p of [0,1]) for(const line of LINES)
-    for(const r of runsForPlayer(board,line,p,true)) c[p]+=(r.len-2);
+  for(const p of [0,1]) for(const line of LINES){
+    for(const r of runsForPlayer(board,line,p,true)){
+      // 連内の非sharedコインのオーナーを数える
+      let cnt0=0, cnt1=0;
+      for(const idx of r.cells){
+        const coin=board[idx];
+        if(!coin||coin.shared||coin.type==='puppet') continue;
+        if(coin.owner===0) cnt0++; else cnt1++;
+      }
+      // 非sharedコインが存在する場合：多数派ownerの連としてのみカウント
+      // 非sharedコインが0（全部shared/puppet）：両者にカウント（稀なケース）
+      const dominant = cnt0===0&&cnt1===0 ? null : (cnt0>=cnt1?0:1);
+      if(dominant===null||dominant===p) c[p]+=(r.len-2);
+    }
+  }
   return c;
 }
 function winningCells(board){ // 点になる揃いを構成するセル集合（ハイライト用）
@@ -1716,25 +1731,41 @@ function resultBoardSVG(rec){
   const cx=i=>PAD+(i%4)*G, cy=i=>PAD+Math.floor(i/4)*G;
   // このゲームの勝者（引き分けはnull）
   const gameWinner = rec.score[0]===rec.score[1] ? null : (rec.score[0]>rec.score[1]?0:1);
+  const WIN_FILL_0='#E7ECF6', WIN_FILL_1='#F7E9E4';
   // 盤面グリッド枠＋勝者マス塗りつぶし
   let cells='';
   for(let i=0;i<16;i++){
     const c=board[i];
     let cellFill='none';
     if(gameWinner!==null && c && (c.owner===gameWinner || c.shared)){
-      cellFill = gameWinner===0 ? 'var(--p0-soft)' : 'var(--p1-soft)';
+      cellFill = gameWinner===0 ? WIN_FILL_0 : WIN_FILL_1;
     }
     cells+=`<rect x="${cx(i)-G/2}" y="${cy(i)-G/2}" width="${G}" height="${G}" fill="${cellFill}" stroke="var(--line)" stroke-width="1"/>`;
   }
   // コイン
   let coins='';
+  const COL0='#2E4B8F', COL1='#B14A33', COL_SHARED='#7A4F9E';
   for(let i=0;i<16;i++){ const c=board[i]; if(!c) continue;
-    let fill = c.shared ? '#7A4F9E' : (c.owner===0?'var(--p0)':'var(--p1)');
-    if(c.type==='puppet') fill='#9aa0a6';
-    const faceTxt = c.face===FRONT?'表':(c.face===BACK?'裏':'');
+    const isFront = c.face===FRONT;
+    const faceTxt = isFront?'表':'裏';
+    let circleFill, circleStroke, strokeW, textCol;
+    if(c.type==='puppet'){
+      circleFill='#EDEBE4'; circleStroke='#B6B5AD'; strokeW=2; textCol='#8C8B83';
+    } else {
+      const baseCol = c.shared ? COL_SHARED : (c.owner===0 ? COL0 : COL1);
+      if(isFront){
+        // 表：塗りつぶし・白文字
+        circleFill=baseCol; circleStroke=c.locked?'#C9A227':'rgba(0,0,0,.15)'; strokeW=c.locked?3:1.5; textCol='#fff';
+      } else {
+        // 裏：白地・色ボーダー・色文字
+        circleFill='#fff'; circleStroke=c.locked?'#C9A227':baseCol; strokeW=c.locked?3:2.5; textCol=baseCol;
+      }
+    }
+    const lockRing = c.locked ? `<circle cx="${cx(i)}" cy="${cy(i)}" r="${R+5}" fill="none" stroke="#C9A227" stroke-width="2" opacity="0.7"/>` : '';
     coins+=`<g>
-      <circle cx="${cx(i)}" cy="${cy(i)}" r="${R}" fill="${fill}" stroke="${c.locked?'#C9A227':'rgba(0,0,0,.15)'}" stroke-width="${c.locked?3:1.5}"/>
-      <text x="${cx(i)}" y="${cy(i)+5}" text-anchor="middle" font-size="16" fill="#fff" font-weight="700">${faceTxt}</text>
+      ${lockRing}
+      <circle cx="${cx(i)}" cy="${cy(i)}" r="${R}" fill="${circleFill}" stroke="${circleStroke}" stroke-width="${strokeW}"/>
+      <text x="${cx(i)}" y="${cy(i)+6}" text-anchor="middle" font-size="15" fill="${textCol}" font-family="serif" font-weight="700">${faceTxt}</text>
     </g>`;
   }
   // 得点ライン（連の端から端へ太線）。プレイヤー色。重なりは少しずらす。
