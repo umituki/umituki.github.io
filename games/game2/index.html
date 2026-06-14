@@ -580,13 +580,13 @@ function afterAction(actionEndsGame=false){
     return true;
   }
   S._justPlacedEighth=false;
-  // ターン交代
-  S.current = S.current===0?1:0;
-  // 新しい手番開始：この手番プレイヤーが「解除担当(releaseFor)」のロックを減算・解除
-  // flipCooldownはカウンター：>0ならクールダウン中、ターン開始ごとに-1し0になったら解除
+  // ターン交代前に「今のプレイヤー」のクールダウンをカウントダウン
+  // （使用したターンが終わるごとに減算。0になったら次のターンから再使用可）
   if(S.flipCooldown && S.flipCooldown[S.current]>0){
     S.flipCooldown[S.current]--;
   }
+  // ターン交代
+  S.current = S.current===0?1:0;
   releaseLocksFor(S.current);
   render();
   if(S.mode==='cpu' && S.current===CPU && !S.over) scheduleCpuTurn();
