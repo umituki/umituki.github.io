@@ -505,11 +505,25 @@ function pickCard(cardId){
   commitPick(cardId);
 }
 function commitPick(cardId){
+  if(!S.sel || S.phase!=='select'){
+    // select フェーズ未準備で呼ばれた場合は安全に無視。
+    // （通常は _processRecvQueue のゲートで待つため到達しないが、二重防御）
+    return;
+  }
   const who=S.sel.order[S.sel.step];
   S.sel.available.delete(cardId);
   S.hands[who].push(cardId);
   sfx('pick');
-  if(who===S.myRole) FB.sendAction({type:'pick', card:cardId});
+  if(who===S.myRole){
+    // 最初の pick（step===0）には現在の gameIndex を付与する。
+    // 受信側が result カウントダウン中などで前のゲームに留まっている場合、
+    // この forGameIndex を見て nextGame() で追いついてから処理できる。
+    // （Firestore の lastAction 上書き対策として、ゲーム遷移を別アクションにせず
+    //   pick に相乗りさせることで連続送信による取りこぼしを避ける）
+    const payload={type:'pick', card:cardId};
+    if(S.sel.step===0) payload.forGameIndex=S.gameIndex;
+    FB.sendAction(payload);
+  }
   S.sel.step++;
   if(S.sel.step>=SELECT_COUNT){
     S.current = S.parent;
@@ -1433,7 +1447,15 @@ function renderResult(){
   S._resultTimer = setInterval(()=>{
     cd--;
     if(cdEl()) cdEl().textContent = last ? `${cd}秒後に最終結果へ…` : `${cd}秒後に次のゲームへ…`;
-    if(cd<=0){ clearInterval(S._resultTimer); nextGame(); }
+    if(cd<=0){
+      clearInterval(S._resultTimer);
+      // 両者とも各自カウントダウンで次へ進む。
+      // 次ゲームの parent は gameLog から決まるため両者一致する（送信不要）。
+      // クライアント間のタイマー誤差によるフェーズずれは、
+      // 最初の pick に付与した forGameIndex を受信側が見て追いつくことで吸収する
+      // （commitPick送信・_receiveAction case 'pick' を参照）。
+      nextGame();
+    }
   }, 1000);
 }
 function resultBoardSVG(rec){
@@ -1913,6 +1935,21 @@ function _processRecvQueue(){
   if(_recvQueue.length===0) return;
   _recvProcessing = true;
   const action = _recvQueue.shift();
+  // pick アクションは「受信側が select フェーズに入り S.sel が用意されてから」
+  // 処理する必要がある。result→select の移行が間に合っていない場合に備え、
+  // 準備完了を待ってから実行する（sel=null クラッシュの防止）。
+  const ready = ()=>{
+    if(action.type==='pick'){
+      // forGameIndex 付きの最初の pick は、result 中でも処理を許可する
+      // （_receiveaction 内で nextGame して select に追いつくため）。
+      if(typeof action.forGameIndex==='number'){
+        return S.phase==='select' || S.phase==='result';
+      }
+      // 2枚目以降の pick は select 準備完了を待つ。
+      return S.phase==='select' && S.sel && S.sel.step < SELECT_COUNT;
+    }
+    return true;
+  };
   const run = ()=>{
     _receiveAction(action);
     let waited=0;
@@ -1925,11 +1962,13 @@ function _processRecvQueue(){
       }
     }, 80);
   };
-  if(S.busy){
+  // busy 解除 と（pickの場合は）select準備完了 の両方を待ってから実行
+  const gateOpen = ()=> !S.busy && ready();
+  if(!gateOpen()){
     let w=0;
     const iv0=setInterval(()=>{
       w+=80;
-      if(!S.busy || w>=4000){ clearInterval(iv0); run(); }
+      if(gateOpen() || w>=15000){ clearInterval(iv0); run(); }
     }, 80);
   } else {
     run();
@@ -2136,6 +2175,18 @@ function _receiveAction(action){
       break;
 
     case 'pick':
+      // forGameIndex があり、自分がまだ前のゲームに留まっている場合は
+      // 先に nextGame() で追いついてから pick を処理する。
+      // （result カウントダウンのタイマー誤差による先行/遅延を吸収）
+      if(typeof action.forGameIndex==='number'){
+        // result 表示中のタイマーを止めてから追いつく
+        let guard=0;
+        while(S.gameIndex < action.forGameIndex && guard++ < 5){
+          clearInterval(S._resultTimer);
+          if(S.phase==='result'){ nextGame(); }
+          else break;
+        }
+      }
       commitPick(action.card);
       break;
 
