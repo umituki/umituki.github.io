@@ -1183,20 +1183,28 @@ function askQuit(){
 }
 
 function renderParentToss(){
+  const isP0 = S.myRole === 0;
   app.innerHTML=`
     <div class="title-wrap">
       <div class="eyebrow">ゲーム 1 / 3</div>
       <h1 class="title" style="font-size:28px">親を決めます</h1>
       <p class="subtitle">コイントスで親（カード選択が先・先攻）を決定します。<br>親が先攻です。</p>
-      <button class="btn" id="tossbtn">コイントス</button>
+      ${isP0
+        ? `<button class="btn" id="tossbtn">コイントス</button>`
+        : `<div class="thinking"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
+           <p class="subtitle" style="margin-top:8px">相手がコイントスをしています…</p>`
+      }
     </div>`;
-  document.getElementById('tossbtn').onclick=()=>{
-    doToss(()=>{
-      S.parent = Math.random()<.5?0:1;
-      toastMsg(`${pname(S.parent)} が親になりました`);
+  if(isP0){
+    document.getElementById('tossbtn').onclick=()=>{
+      // p0のみトスを実行し結果をFirestoreに送信
+      const result = Math.random()<0.5 ? 0 : 1; // 0=p0が親, 1=p1が親
+      FB.sendAction({type:'parentToss', parent: result});
+      S.parent = result;
+      toastMsg(\`\${pname(S.parent)} が親になりました\`);
       beginSelect();
-    });
-  };
+    };
+  }
 }
 
 function renderSelect(){
@@ -1791,39 +1799,40 @@ async function joinMatchQueue(){
   }
 }
 
-async function _findMyRoom(user){
-  // 自分がp1として招待されたルームを探す
-  // roomsコレクションに p1.userId を問い合わせ
-  // （数が少ないため、直近作成ルームをIDで引く設計にする）
-  // 実装: joinQueueの際にself.waitingRoomId をFirestoreに書いてもらう形に変更
-  // 簡易実装：待機ドキュメントにroomIdを書き込む方式
+async function _findMyRoom(user, retries=0){
   const waitingSnap = await getDoc(doc(db, 'matchQueue', 'pending_' + user.docId));
   if(waitingSnap.exists()){
     const {roomId} = waitingSnap.data();
     await deleteDoc(doc(db, 'matchQueue', 'pending_' + user.docId));
-    _subscribeRoom(roomId, 1);
+    _subscribeRoom(roomId, 0); // 待機していた側はp0
+  } else if(retries < 10){
+    // pending_がまだ書かれていない場合は最大10回リトライ
+    setTimeout(()=>_findMyRoom(user, retries+1), 500);
+  } else {
+    toastMsg('マッチング処理に失敗しました。もう一度お試しください。');
+    newMatch(); render();
   }
 }
 
 async function _createRoom(p0, p1){
-  // p0=待機していたプレイヤー, p1=後からマッチしたプレイヤー(自分)
+  // p0=待機していたプレイヤー（myRoleは後で_findMyRoomで0に設定）
+  // p1=後からマッチしたプレイヤー(自分) → myRole=1
   const roomId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-  const parent = Math.random()<0.5 ? 0 : 1; // 先攻をランダム決定
 
   await setDoc(doc(db, 'rooms', roomId), {
     p0: {userId: p0.userId, userName: p0.userName},
     p1: {userId: p1.docId, userName: p1.name},
-    status: 'selecting',
-    parent,
+    status: 'playing',
     gameIndex: 0,
     totals: [0,0],
     gameLog: [],
     lastAction: null,
     lastActionId: null,
+    disconnected: null,
     createdAt: serverTimestamp()
   });
 
-  // p0への通知（matchQueue/pending_{p0Id}に書き込む）
+  // p0への通知（pending_{p0.userId}に書き込む）
   await setDoc(doc(db, 'matchQueue', 'pending_' + p0.userId), {roomId});
 
   // 自分(p1)はルームを購読開始
@@ -1838,23 +1847,45 @@ async function leaveQueue(){
 
 /* ---- ルーム購読・受信 ---- */
 function _subscribeRoom(roomId, myRole){
-  const user = loadLocalUser();
   S.roomId = roomId;
   S.myRole = myRole;
-  // pnamesをroomデータから設定するため、まず初期データ取得
+
+  // 初回データ取得でpnamesとゲーム開始
   getDoc(doc(db,'rooms',roomId)).then(snap=>{
     if(!snap.exists()) return;
     const d = snap.data();
     S.pnames[0] = d.p0.userName;
     S.pnames[1] = d.p1.userName;
-    // ゲーム開始
     S.gameIndex=0; S.totals=[0,0]; S.gameLog=[]; S.lastMove=null;
     startGame();
   });
 
-  _roomUnsub = onSnapshot(doc(db,'rooms',roomId), snap=>{
+  // onDisconnect: 自分が切断したとき自動でdisconnectedフラグを書き込む
+  // （ブラウザのbeforeunloadでも書き込む）
+  const roomRef = doc(db,'rooms',roomId);
+  window._onBeforeUnload = async()=>{
+    // 試合中のみ切断フラグを立てる
+    if(S.roomId && S.phase && !['title','matchmaking','final'].includes(S.phase)){
+      try {
+        await updateDoc(roomRef, {disconnected: myRole, disconnectedAt: serverTimestamp()});
+      } catch(e){}
+    }
+  };
+  window.addEventListener('beforeunload', window._onBeforeUnload);
+
+  _roomUnsub = onSnapshot(roomRef, snap=>{
     if(!snap.exists()) return;
     const d = snap.data();
+
+    // 試合破棄済みなら無視
+    if(d.status === 'abandoned') return;
+
+    // 切断検知（相手が切断した場合）
+    if(d.disconnected !== null && d.disconnected !== undefined && d.disconnected !== myRole){
+      _handleDisconnect(d.disconnected, roomId);
+      return;
+    }
+
     // 自分が送ったアクションは無視
     if(!d.lastAction || d.lastActionId === S.lastActionId) return;
     S.lastActionId = d.lastActionId;
@@ -1862,8 +1893,67 @@ function _subscribeRoom(roomId, myRole){
   });
 }
 
+let _disconnectModalShown = false;
+function _handleDisconnect(disconnectedRole, roomId){
+  if(_disconnectModalShown) return;
+  _disconnectModalShown = true;
+
+  const oppName = S.pnames ? pname(disconnectedRole) : '相手';
+  const bg = document.createElement('div'); bg.className='modal-bg';
+  bg.innerHTML=`<div class="modal">
+    <h3>⚠️ 接続が切れました</h3>
+    <p class="picker-note">${oppName} の接続が切れました。<br>再接続を待つか、試合を破棄してください。</p>
+    <p class="picker-note" id="dc-timer" style="color:var(--p1);font-weight:700">60秒後に自動破棄されます</p>
+    <div class="close-row">
+      <button class="btn ghost sm" id="dc-wait">再接続を待つ（60秒）</button>
+      <button class="btn" id="dc-abandon">試合を破棄する</button>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+
+  let remaining = 60;
+  const timerEl = () => document.getElementById('dc-timer');
+  const countdown = setInterval(()=>{
+    remaining--;
+    if(timerEl()) timerEl().textContent = `${remaining}秒後に自動破棄されます`;
+    if(remaining <= 0){
+      clearInterval(countdown);
+      _abandonMatch(roomId, bg);
+    }
+  }, 1000);
+
+  document.getElementById('dc-wait').onclick=()=>{
+    // モーダルを閉じて待機（切断フラグをクリアして相手の再接続を待つ）
+    clearInterval(countdown);
+    bg.remove();
+    _disconnectModalShown = false;
+    // disconnectedフラグをリセット
+    try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
+    toastMsg('再接続を待っています…');
+  };
+
+  document.getElementById('dc-abandon').onclick=()=>{
+    clearInterval(countdown);
+    _abandonMatch(roomId, bg);
+  };
+}
+
+async function _abandonMatch(roomId, bg){
+  if(bg && bg.parentNode) bg.remove();
+  _disconnectModalShown = false;
+  try { await updateDoc(doc(db,'rooms',roomId), {status:'abandoned', disconnected: null}); } catch(e){}
+  leaveRoom();
+  newMatch(); render();
+  toastMsg('試合を破棄しました');
+}
+
 function leaveRoom(){
   if(_roomUnsub){ _roomUnsub(); _roomUnsub=null; }
+  if(window._onBeforeUnload){
+    window.removeEventListener('beforeunload', window._onBeforeUnload);
+    window._onBeforeUnload = null;
+  }
+  _disconnectModalShown = false;
   S.roomId=null; S.myRole=null;
 }
 
@@ -1888,8 +1978,15 @@ function _receiveAction(action){
   const opp = S.myRole ^ 1; // 相手のrole
   switch(action.type){
 
+    case 'parentToss':
+      // p0が決定した親を受け取る（p1側のみ受信）
+      S.parent = action.parent;
+      toastMsg(`${pname(S.parent)} が親になりました`);
+      beginSelect();
+      break;
+
     case 'tossResult':
-      // 相手がトスを行った → 結果を受け取ってアニメ再生
+      // 相手の手番中のトス結果を受け取ってアニメ再生してからplaceCell待ちに
       doToss(face=>{
         S.pending={type:'placeCell', face};
         render();
@@ -1924,16 +2021,21 @@ function _receiveAction(action){
     case 'surrender':
       toastMsg(`${pname(opp)} が投降しました`);
       setTimeout(()=>{
-        // 全ゲームを相手の負けとして強制終了
-        S.phase='final';
-        // 残りゲームを全部myRoleの勝ちで埋める
+        // 残りゲームを全部自分の勝ちで埋めてfinalへ
         while(S.gameLog.length < 3){
-          const gi = S.gameLog.length;
           const fakeScore = S.myRole===0 ? [9,0] : [0,9];
           S.totals[0]+=fakeScore[0]; S.totals[1]+=fakeScore[1];
-          S.gameLog.push({parent:S.parent, board:[0,0], cards:[0,0], score:fakeScore, snapshot:Array(16).fill(null), runs:[], sets:[0,0]});
+          S.gameLog.push({
+            parent: S.parent||0,
+            board: [0,0],
+            cards: [0,0],
+            score: fakeScore,
+            snapshot: Array(16).fill(null),
+            runs: [],
+            sets: [0,0]
+          });
         }
-        render();
+        S.phase='final'; render();
       }, 800);
       break;
   }
