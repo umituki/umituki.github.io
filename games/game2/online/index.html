@@ -1103,7 +1103,7 @@ function render(){
 }
 
 function renderTitle(){
-  const user = FB.getUser();
+  const user = (window.FB && window.FB.getUser) ? window.FB.getUser() : null;
   app.innerHTML=`
     <div class="title-wrap">
       <div class="title-mark">
@@ -1674,10 +1674,9 @@ function showRules(){
 }
 
 /* ============================================================
-   起動
+   起動（FB初期化後に呼ばれる）
    ============================================================ */
-newMatch();
-render();
+function _boot(){ newMatch(); render(); }
 </script>
 
 <!-- ========== FIREBASE ========== -->
@@ -2143,6 +2142,9 @@ window.FB = {
   showTransferModal,
   showRecordModal,
 };
+
+// FBの準備完了後にゲームを起動
+window._boot();
 </script>
 </body>
 </html>
