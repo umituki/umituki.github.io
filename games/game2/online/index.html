@@ -331,7 +331,7 @@
 /* ============================================================
    表裏陣取り — ロジック
    ============================================================ */
-const APP_VERSION='Ver.1.0.5';
+const APP_VERSION='Ver.1.0.6';
 const MY=0, OPP=1; // オンライン: MY=自分, OPP=相手
 const FRONT='f', BACK='b';
 const faceLabel=f=>f===FRONT?'表':'裏';
@@ -466,6 +466,7 @@ function newMatch(){
     _tossFired:false,    // 親決めトスを実行済みか（多重発火防止）
     _tossTimer:null,     // 自動トスの保留中タイマーID
     _parentTossKey:null, // 親決め結果の重複適用防止キー
+    _tossError:false,    // 親決め通信エラー時は自動再試行せず手動再試行にする
   };
 }
 
@@ -1159,13 +1160,30 @@ function renderParentToss(){
       <div class="eyebrow">ゲーム 1 / 3</div>
       <h1 class="title" style="font-size:28px">親を決めます</h1>
       <p class="subtitle">コイントスで親（カード選択が先・先攻）を決定します。<br>親が先攻です。</p>
-      <div class="thinking"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
-      <p class="subtitle" style="margin-top:8px">${isP0 ? 'まもなく自動でコイントスします…' : '相手がコイントスをしています…'}</p>
+      ${S._tossError ? `
+        <p class="subtitle" style="margin-top:8px;color:var(--p1);font-weight:700">通信に失敗しました。自動再試行は停止しています。</p>
+        <div class="title-actions" style="margin-top:16px">
+          <button class="btn sm" id="parent-retry">コイントスを再試行</button>
+        </div>
+      ` : `
+        <div class="thinking"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
+        <p class="subtitle" style="margin-top:8px">${isP0 ? 'まもなく自動でコイントスします…' : '相手がコイントスをしています…'}</p>
+      `}
     </div>`;
+  if(S._tossError){
+    const btn=document.getElementById('parent-retry');
+    if(btn){
+      btn.onclick=()=>{
+        ensureAudio(); sfx('click');
+        S._tossError=false;
+        S._tossFired=false;
+        if(S._tossTimer){ clearTimeout(S._tossTimer); S._tossTimer=null; }
+        doParentToss();
+      };
+    }
+    return;
+  }
   // p0 側のみ、未トスなら1秒後に自動でトスを実行する。
-  // 1秒待つのは、両者の _subscribeRoom 初期化（盤面準備）が整ってから
-  // parentToss を送るため。これにより p1 側でトス結果の取りこぼし／
-  // フェーズ巻き戻しが起きにくくなる。
   // 多重発火防止：既にトス済み or タイマー設定済みなら何もしない。
   if(isP0 && !S._tossFired && !S._tossTimer){
     S._tossTimer = setTimeout(doParentToss, 1000);
@@ -1193,21 +1211,22 @@ function applyParentTossResult(parent, sourceKey=null){
 function doParentToss(){
   if(S._tossFired) return;
   S._tossFired = true;
+  S._tossError = false;
   if(S._tossTimer){ clearTimeout(S._tossTimer); S._tossTimer=null; }
   const result = Math.random()<0.5 ? 0 : 1; // 0=p0が親, 1=p1が親
-  // sendAction は async (内部で await updateDoc)。
-  // 書き込み完了を待ってから beginSelect() することで、
-  // p1 が onSnapshot でアクションを受信するタイミングと揃い、
-  // sel.step の起点がずれることによる手番同期不具合を防ぐ。
-  FB.sendAction({type:'parentToss', parent: result}).then(ok=>{
-    // 書き込みに失敗した場合、p0だけが先へ進むと同期不能になるため進めない。
+
+  // 親決めは Firestore ルールに弾かれやすい新規トップレベル項目を使わず、
+  // 既存の lastAction / lastActionId / gameState だけで送る。
+  // gameState には「親決定後のカード選択画面」を保存するため、
+  // 受信側は lastAction を取りこぼしても gameState から復元できる。
+  FB.sendParentDecision(result).then(ok=>{
     if(!ok){
+      // 自動再試行すると通信エラーが連続表示されるため、手動再試行に切り替える。
       S._tossFired = false;
+      S._tossError = true;
       render();
       return;
     }
-    // onSnapshot は lastActionId の照合で自分送信分をスキップするため、
-    // p0 のローカル状態はここで明示的に適用する。
     applyParentTossResult(result, `local:${S.gameIndex}:${result}`);
   });
 }
@@ -2251,6 +2270,51 @@ function restoreState(st){
 }
 
 /* ---- アクション送信 ---- */
+function buildParentSelectState(parent){
+  const order=[];
+  let t=parent;
+  for(let k=0;k<SELECT_COUNT;k++){
+    order.push(t);
+    t = t===0 ? 1 : 0;
+  }
+  const base = serializeState();
+  return {
+    ...base,
+    phase:'select',
+    parent,
+    current:null,
+    board:Array(16).fill(null),
+    coins:[8,8],
+    hands:[[],[]],
+    designate:[null,null],
+    cardLocks:[],
+    flipCooldown:[0,0],
+    sel:{ available: ALL_CARDS.slice(), order, step:0 },
+    over:false,
+    lastBreakdown:null,
+    pnames:S.pnames
+  };
+}
+
+async function sendParentDecision(parent){
+  if(!S.roomId) return false;
+  const actionId = crypto.randomUUID();
+  S.lastActionId = actionId;
+  try {
+    await updateDoc(doc(db,'rooms', S.roomId), {
+      lastAction: {type:'parentToss', parent},
+      lastActionId: actionId,
+      gameState: buildParentSelectState(parent)
+    });
+    setTimeout(()=>_resetTurnWatchdog(), 100);
+    return true;
+  } catch(e){
+    toastMsg('通信エラーが発生しました');
+    console.error(e);
+    return false;
+  }
+}
+
 async function sendAction(action){
   if(!S.roomId) return false;
   const actionId = crypto.randomUUID();
@@ -2265,19 +2329,6 @@ async function sendAction(action){
       lastActionId: actionId,
       gameState: serializeState()
     };
-
-    // 親決め結果だけは「一時的な最新アクション」ではなく、
-    // room に残る永続フィールドとしても保存する。
-    // これにより、p0 が親になってすぐカードを選び lastAction が pick に上書きされても、
-    // p1 は parentToss を読んで select フェーズへ進める。
-    if(action.type === 'parentToss'){
-      payload.parentToss = {
-        gameIndex: S.gameIndex,
-        parent: action.parent,
-        actionId,
-        createdAtMs: Date.now()
-      };
-    }
 
     await updateDoc(doc(db,'rooms', S.roomId), payload);
     setTimeout(()=>_resetTurnWatchdog(), 100);
@@ -2593,6 +2644,7 @@ window.FB = {
   leaveRoom,
   finishRoom,
   sendAction,
+  sendParentDecision,
   sendSelectState,
   saveMatchResult,
   surrender,
