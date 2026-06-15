@@ -155,7 +155,7 @@
   .instruction .hl.p0{color:var(--p0)}
   .acts{display:flex;gap:8px;flex-wrap:wrap}
   .acts .btn{flex:1;min-width:120px}
-  .thinking{font-size:13px;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 0}
+  .thinking{font-size:13px;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 0;width:100%;text-align:center}
   .thinking .pip{width:6px;height:6px;border-radius:50%;background:var(--p1);animation:blink 1s infinite}
   @keyframes blink{0%,100%{opacity:.25}50%{opacity:1}}
 
@@ -332,7 +332,7 @@
    表裏陣取り — ロジック
    ============================================================ */
 const MY=0, OPP=1; // オンライン: MY=自分, OPP=相手
-const APP_VERSION='Ver.1.0.1';
+const APP_VERSION='Ver.1.0.2';
 const FRONT='f', BACK='b';
 const faceLabel=f=>f===FRONT?'表':'裏';
 const pname=p=> (S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あなた':'相手');
@@ -1941,9 +1941,10 @@ async function _findMyRoom(user, retries=0){
 
 async function _createRoom(p0, p1){
   const roomId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-  const initialParent = Math.random() < 0.5 ? 0 : 1;
-  const initialState = makeInitialSelectState(initialParent, p0.userName, p1.name);
 
+  // ルーム作成時は、元のFireStoreルールで許可されていた最小構造だけを書き込む。
+  // gameState を create 時に含めると、既存ルールが「想定外のフィールド」として拒否し、
+  // 待機側に pending が作られず「マッチング処理に失敗しました」になる可能性がある。
   await setDoc(doc(db, 'rooms', roomId), {
     p0: {userId: p0.userId, userName: p0.userName},
     p1: {userId: p1.docId, userName: p1.name},
@@ -1953,7 +1954,6 @@ async function _createRoom(p0, p1){
     gameLog: [],
     lastAction: null,
     lastActionId: null,
-    gameState: initialState,
     disconnected: null,
     createdAt: serverTimestamp()
   });
