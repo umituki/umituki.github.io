@@ -344,7 +344,7 @@ const pname=p=> escapeHTML((S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あ
 const isHuman=p=> S && S.myRole!==null ? p===S.myRole : p===MY;  // 自分のroleと一致するプレイヤーのみ操作可
 // 設定は match を跨いで保持（newMatchでリセットしない）
 let SETTINGS={ sound:true, anim:true, shake:true };
-const APP_VERSION='Ver.1.0.14';
+const APP_VERSION='Ver.1.0.15';
 
 const CARD_INFO={
   shitei:{name:'指定', desc:'次の相手と自分のコイントス結果を、選択した向きに固定する。', prio:6},
@@ -601,6 +601,8 @@ function lockedCount(player,card){
    ============================================================ */
 function endGame(){
   S.over=true; S.busy=false; S.pending=null;
+  clearTimeout(S._resultTimer);
+  if(window._resetTurnWatchdog) clearTimeout(_turnWatchdog);
   const bs=boardScore(S.board);
   const cardPts=[S.hands[0].length, S.hands[1].length];
   const total=[bs[0]+cardPts[0], bs[1]+cardPts[1]];
@@ -665,8 +667,7 @@ function startCardUse(cardId){
       sfx('card'); setLastMove(`${pname(p)}：革命`);
       showCardUse(p,'kakumei'); shakeScreen();
       toastMsg('革命：すべて表になった');
-      FB.sendAction({type:'card', card:'kakumei'});
-      afterAction(); break;
+      finishLocalAction({type:'card', card:'kakumei'}, false, 'card:kakumei'); break;
     case 'chudan':
       if(!anyThree(S.board)){
         toastMsg('中断は、どちらかが一列以上揃っている時のみ使用できます');
@@ -676,8 +677,7 @@ function startCardUse(cardId){
       S.hands[p]=[];
       sfx('card'); setLastMove(`${pname(p)}：中断`);
       toastMsg('中断：ゲームを終了します');
-      FB.sendAction({type:'card', card:'chudan'});
-      afterAction(true); break;
+      finishLocalAction({type:'card', card:'chudan', forceEnd:true}, true, 'card:chudan'); break;
     case 'shitei':
       S.pending={type:'shitei', card:'shitei'}; render(); break;
     case 'nurikeshi':
@@ -709,8 +709,7 @@ function clickCell(idx){
     if(S.coins[me]===0) S._justPlacedEighth=true;
     setLastMove(`${pname(me)}：${faceLabel(pd.face)}を配置`);
     S.pending=null;
-    FB.sendAction({type:'place', cell:idx, face:pd.face, tossed: !pd.designated});
-    afterAction();
+    finishLocalAction({type:'place', cell:idx, face:pd.face, tossed: !pd.designated}, false, 'place');
   } else if(pd.type==='flip'){
     if(!cell||cell.type==='puppet'||cell.locked) return;
     if(!(cell.owner===me||cell.shared)) return;
@@ -719,8 +718,7 @@ function clickCell(idx){
     S.flipCooldown[me]=2;
     sfx('flip'); shakeScreen(); setLastMove(`${pname(me)}：コインを裏返した`);
     S.pending=null;
-    FB.sendAction({type:'flip', cell:idx});
-    afterAction();
+    finishLocalAction({type:'flip', cell:idx}, false, 'flip');
   } else if(pd.type==='nurikeshi'){
     if(!cell||cell.owner!==opp||cell.locked||cell.type==='puppet'||cell.shared) return;
     consumeCardUseAnim(me,'nurikeshi');
@@ -728,8 +726,7 @@ function clickCell(idx){
     sfx('card'); setLastMove(`${pname(me)}：色抜き`);
     toastMsg('色抜き：相手コインを両者のコインにした');
     S.pending=null;
-    FB.sendAction({type:'card', card:'nurikeshi', cell:idx});
-    afterAction();
+    finishLocalAction({type:'card', card:'nurikeshi', cell:idx}, false, 'card:nurikeshi');
   } else if(pd.type==='uragaeshi'){
     if(!cell||cell.owner!==opp||cell.locked||cell.type==='puppet') return;
     consumeCardUseAnim(me,'uragaeshi');
@@ -738,8 +735,7 @@ function clickCell(idx){
     sfx('flip'); setLastMove(`${pname(me)}：裏返し`);
     toastMsg('裏返し：相手コインを裏返してロックした');
     S.pending=null;
-    FB.sendAction({type:'card', card:'uragaeshi', cell:idx});
-    afterAction();
+    finishLocalAction({type:'card', card:'uragaeshi', cell:idx}, false, 'card:uragaeshi');
   } else if(pd.type==='kagikake'){
     if(!cell||cell.type==='puppet'||cell.locked) return;
     if(!(cell.owner===me||cell.shared)) return;
@@ -748,8 +744,7 @@ function clickCell(idx){
     sfx('card'); setLastMove(`${pname(me)}：鍵掛け`);
     toastMsg('鍵掛け：このコインは効果を受けず変化しない');
     S.pending=null;
-    FB.sendAction({type:'card', card:'kagikake', cell:idx});
-    afterAction();
+    finishLocalAction({type:'card', card:'kagikake', cell:idx}, false, 'card:kagikake');
   } else if(pd.type==='moveFrom'){
     if(!cell||cell.type==='puppet'||cell.locked) return;
     if(!(cell.owner===me||cell.shared)) return;
@@ -763,8 +758,7 @@ function clickCell(idx){
     S.board[idx]=S.board[pd.from]; S.board[pd.from]=null;
     sfx('card'); setLastMove(`${pname(me)}：移動`);
     S.pending=null;
-    FB.sendAction({type:'card', card:'ido', from:pd.from, to:idx});
-    afterAction();
+    finishLocalAction({type:'card', card:'ido', from:pd.from, to:idx}, false, 'card:ido');
   }
 }
 function chooseDesignate(face){
@@ -776,8 +770,7 @@ function chooseDesignate(face){
   S.pending=null;
   sfx('card'); setLastMove(`${pname(p)}：指定（${faceLabel(face)}）`);
   toastMsg(`指定：次の相手と自分のコイントス結果を${faceLabel(face)}に固定`);
-  FB.sendAction({type:'card', card:'shitei', face});
-  afterAction();
+  finishLocalAction({type:'card', card:'shitei', face}, false, 'card:shitei');
 }
 function duplicateFlow(p){
   cardPickerModal({
@@ -790,8 +783,7 @@ function duplicateFlow(p){
       S.hands[p].push(dupId);
       sfx('card'); setLastMove(`${pname(p)}：複製（${CARD_INFO[dupId].name}）`);
       toastMsg(`複製：「${CARD_INFO[dupId].name}」を複製した`);
-      FB.sendAction({type:'card', card:'fukusei', dup:dupId});
-      afterAction();
+      finishLocalAction({type:'card', card:'fukusei', dup:dupId}, false, 'card:fukusei');
     },
     onCancel:()=>{}
   });
@@ -808,8 +800,7 @@ function teitaiFlow(p){
       S.cardLocks.push({owner:opp, card:lockId, releaseFor:p, turns:2});
       sfx('card'); setLastMove(`${pname(p)}：停滞（${CARD_INFO[lockId].name}）`);
       toastMsg(`停滞：相手の「${CARD_INFO[lockId].name}」を止めた`);
-      FB.sendAction({type:'card', card:'teitai', lock:lockId});
-      afterAction();
+      finishLocalAction({type:'card', card:'teitai', lock:lockId}, false, 'card:teitai');
     },
     onCancel:()=>{}
   });
@@ -2647,13 +2638,13 @@ async function sendAction(action){
   const roomId = S.roomId;
   S.lastActionId = actionId;
   try {
-    // 呼び出し元は多くの場合、sendAction の直後に afterAction() でターンを進める。
-    // ここで一度イベントループに戻し、最終状態を serializeState() に載せる。
+    // カード選択など、呼び出し直後にローカル状態が進む処理のため、1tick待ってから保存する。
     await new Promise(r=>setTimeout(r, 0));
     await updateDoc(doc(db,'rooms', roomId), {
       lastAction: {...action, senderRole:S.myRole, sentAtMs:Date.now()},
       lastActionId: actionId,
       gameState: serializeState(),
+      gameIndex: S.gameIndex,
       ..._lastSeenPatch(S.myRole),
       updatedAt: serverTimestamp()
     });
@@ -2664,6 +2655,34 @@ async function sendAction(action){
   }
 }
 
+async function sendActionNow(action, reason='action'){
+  if(!S.roomId) return;
+  const actionId = crypto.randomUUID();
+  const roomId = S.roomId;
+  S.lastActionId = actionId;
+  try {
+    const state = serializeState();
+    await updateDoc(doc(db,'rooms', roomId), {
+      lastAction: {...action, senderRole:S.myRole, sentAtMs:Date.now(), syncReason:reason},
+      lastActionId: actionId,
+      gameState: state,
+      gameIndex: S.gameIndex,
+      forcedPhase: state.phase,
+      ..._lastSeenPatch(S.myRole),
+      updatedAt: serverTimestamp()
+    });
+    setTimeout(()=>_resetTurnWatchdog(), 100);
+  } catch(e){
+    toastMsg('通信エラーが発生しました');
+    console.error(e);
+  }
+}
+
+function finishLocalAction(action, actionEndsGame=false, reason='action'){
+  const ended = afterAction(!!actionEndsGame);
+  if(action) sendActionNow({...action, endsGame: ended, finalPhase: S.phase}, reason);
+  return ended;
+}
 
 async function syncState(reason='state'){
   if(!S.roomId) return;
@@ -2988,6 +3007,7 @@ window.FB = {
   finishRoom,
   commitParentToss,
   sendAction,
+  sendActionNow,
   syncState,
   advanceAfterResult,
   saveMatchResult,
