@@ -332,7 +332,7 @@
    表裏陣取り — ロジック
    ============================================================ */
 const MY=0, OPP=1; // オンライン: MY=自分, OPP=相手
-const APP_VERSION='Ver.1.0.2';
+const APP_VERSION='Ver.1.0.3';
 const FRONT='f', BACK='b';
 const faceLabel=f=>f===FRONT?'表':'裏';
 const pname=p=> (S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あなた':'相手');
@@ -546,31 +546,30 @@ function pickCard(cardId){
 function commitPick(cardId){
   if(!S.sel || S.phase!=='select'){
     // select フェーズ未準備で呼ばれた場合は安全に無視。
-    // （通常は _processRecvQueue のゲートで待つため到達しないが、二重防御）
     return;
   }
   const who=S.sel.order[S.sel.step];
+  const isLocalPick = who===S.myRole;
+  if(!S.sel.available.has(cardId)) return;
+
   S.sel.available.delete(cardId);
   S.hands[who].push(cardId);
   sfx('pick');
-  if(who===S.myRole){
-    // 最初の pick（step===0）には現在の gameIndex を付与する。
-    // 受信側が result カウントダウン中などで前のゲームに留まっている場合、
-    // この forGameIndex を見て nextGame() で追いついてから処理できる。
-    // （Firestore の lastAction 上書き対策として、ゲーム遷移を別アクションにせず
-    //   pick に相乗りさせることで連続送信による取りこぼしを避ける）
-    const payload={type:'pick', card:cardId};
-    if(S.sel.step===0) payload.forGameIndex=S.gameIndex;
-    FB.sendAction(payload);
-  }
+
+  // 重要：通信に載せる gameState は「カード選択後」の状態でなければならない。
+  // 旧実装は step を進める前に送信していたため、受信側が state 復元で追随できなかった。
   S.sel.step++;
   if(S.sel.step>=SELECT_COUNT){
     S.current = S.parent;
     S.phase='play';
-    render();
-    return;
   }
   render();
+
+  if(isLocalPick){
+    // Firestore ルールが lastAction.pick の追加フィールドを拒否する可能性があるため、
+    // pick は専用送信にする。失敗時は gameState だけで再送する。
+    FB.sendPick(cardId);
+  }
 }
 
 /* ============================================================
@@ -2062,17 +2061,14 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
       return;
     }
 
-    // 初期親決めはイベントではなく gameState を正とする。
-    // 何らかの理由で旧 toss 画面に落ちた場合は、受信した gameState から即復元する。
-    if(d.gameState){
-      const gs = d.gameState;
-      const canRestoreInitial = gs.gameIndex === 0 && gs.phase === 'select' && gs.parent !== null && gs.parent !== undefined;
-      if(canRestoreInitial && (S.phase === 'toss' || (S.gameIndex===0 && (!S.sel || S.parent===null)))){
-        restoreState(gs);
-        render();
-        _resetTurnWatchdog();
-        return;
-      }
+    // gameState は共有状態の正本として扱う。
+    // 特にカード選択は lastAction の取りこぼし・ルール拒否に備え、state 復元だけでも進める。
+    if(d.gameState && shouldRestoreSelectState(d.gameState)){
+      restoreState(d.gameState);
+      if(d.lastActionId) S.lastActionId = d.lastActionId; // 同じ pick を後から二重処理しない
+      render();
+      _resetTurnWatchdog();
+      return;
     }
 
     if(!d.lastAction || d.lastActionId === S.lastActionId) return;
@@ -2271,6 +2267,31 @@ function restoreState(st){
   S.busy = false;
 }
 
+function selectProgress(st){
+  if(!st || !st.sel || !Array.isArray(st.sel.order)) return -1;
+  return typeof st.sel.step === 'number' ? st.sel.step : -1;
+}
+function shouldRestoreSelectState(gs){
+  if(!gs || gs.gameIndex !== S.gameIndex) return false;
+
+  // カード選択中：相手の選択で step が進んだ state を正として復元する。
+  if(S.phase==='select' && gs.phase==='select' && S.sel && gs.sel){
+    return selectProgress(gs) > selectProgress({sel:S.sel});
+  }
+
+  // 最後のカード選択後：相手側が play に進んだらこちらも追従する。
+  if(S.phase==='select' && gs.phase==='play'){
+    return true;
+  }
+
+  // ローカルがまだ初期化途中の場合の保険。
+  if((S.phase==='toss' || !S.sel) && gs.phase==='select'){
+    return true;
+  }
+
+  return false;
+}
+
 /* ---- アクション送信 ---- */
 async function repairGameState(state){
   if(!S.roomId) return false;
@@ -2279,6 +2300,40 @@ async function repairGameState(state){
     return true;
   } catch(e){
     console.warn('gameState 修復保存に失敗（ローカル進行は継続）', e);
+    return false;
+  }
+}
+
+async function sendPick(cardId){
+  if(!S.roomId) return false;
+  const action = {type:'pick', card:cardId};
+  const actionId = crypto.randomUUID();
+  const state = serializeState();
+
+  // 第1候補：通常どおり lastAction + gameState。
+  // ただし pick に余計なフィールドは付けない。Firestore ルールに弾かれやすくなるため。
+  try {
+    await updateDoc(doc(db,'rooms', S.roomId), {
+      lastAction: action,
+      lastActionId: actionId,
+      gameState: state
+    });
+    S.lastActionId = actionId;
+    setTimeout(()=>_resetTurnWatchdog(), 100);
+    return true;
+  } catch(e1){
+    console.warn('pick action送信に失敗。gameStateのみで再送します', e1);
+  }
+
+  // 第2候補：lastAction を使わず gameState だけを保存。
+  // 受信側は onSnapshot の gameState 復元でカード選択を進める。
+  try {
+    await updateDoc(doc(db,'rooms', S.roomId), {gameState: state});
+    setTimeout(()=>_resetTurnWatchdog(), 100);
+    return true;
+  } catch(e2){
+    toastMsg('通信エラーが発生しました');
+    console.error(e2);
     return false;
   }
 }
@@ -2589,6 +2644,7 @@ window.FB = {
   leaveRoom,
   finishRoom,
   sendAction,
+  sendPick,
   repairGameState,
   saveMatchResult,
   surrender,
