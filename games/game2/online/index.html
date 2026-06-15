@@ -344,7 +344,7 @@ const pname=p=> escapeHTML((S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あ
 const isHuman=p=> S && S.myRole!==null ? p===S.myRole : p===MY;  // 自分のroleと一致するプレイヤーのみ操作可
 // 設定は match を跨いで保持（newMatchでリセットしない）
 let SETTINGS={ sound:true, anim:true, shake:true };
-const APP_VERSION='Ver.1.0.13';
+const APP_VERSION='Ver.1.0.14';
 
 const CARD_INFO={
   shitei:{name:'指定', desc:'次の相手と自分のコイントス結果を、選択した向きに固定する。', prio:6},
@@ -435,7 +435,7 @@ function scoringRuns(board){
   }
   return runs;
 }
-const cloneBoard=b=>b.map(c=>c?{owner:c.owner,face:c.face,shared:c.shared,locked:c.locked,type:c.type}:null);
+const cloneBoard=b=>_serializeBoard(b);
 const emptyCells=b=>{const a=[];for(let i=0;i<16;i++) if(!b[i]) a.push(i); return a;};
 const ownCoins=(b,p)=>{const a=[];for(let i=0;i<16;i++){const c=b[i]; if(c&&(c.owner===p||c.shared||c.type==='puppet')) a.push(i);} return a;};
 const toss=()=>Math.random()<.5?FRONT:BACK;
@@ -2284,7 +2284,6 @@ function _showRoomAbandonedNotice(message='試合が破棄されました'){
   if(_abandonedNoticeShown) return;
   _abandonedNoticeShown = true;
   clearTimeout(_turnWatchdog);
-  _stopHeartbeat();
   _clearActiveRoom();
   if(_roomUnsub){ _roomUnsub(); _roomUnsub=null; }
   if(window._onBeforeUnload){
@@ -2297,7 +2296,7 @@ function _showRoomAbandonedNotice(message='試合が破棄されました'){
   const bg = document.createElement('div'); bg.className='modal-bg';
   bg.innerHTML=`<div class="modal">
     <h3>試合が破棄されました</h3>
-    <p class="picker-note">${escapeHTML(message)}。<br>この試合は終了しました。</p>
+    <p class="picker-note">${message}。<br>この試合は終了しました。</p>
     <div class="close-row">
       <button class="btn" id="abandoned-ok">了承</button>
     </div>
@@ -2409,8 +2408,7 @@ async function finishRoom(){
         finishedAt: serverTimestamp(),
         gameState: finalState,
         disconnected: null,
-        ..._lastSeenPatch(S.myRole),
-        updatedAt: serverTimestamp()
+        ..._lastSeenPatch(S.myRole)
       });
     } catch(e){ console.warn('ルーム終了状態の保存に失敗', e); }
   }
@@ -2418,6 +2416,66 @@ async function finishRoom(){
 }
 
 /* ---- 状態のシリアライズ/復元 ---- */
+function _firestoreClean(value, inArray=false){
+  // Firestore は undefined を保存できず、配列の要素として配列を直接入れることもできない。
+  // 保存直前の gameState を必ず Firestore 互換の値だけに正規化する。
+  if(value === undefined) return null;
+  if(value === null) return null;
+  if(typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if(typeof value !== 'object') return value;
+  if(value instanceof Set) return _firestoreClean(Array.from(value), inArray);
+  if(Array.isArray(value)){
+    const arr = value.map(v=>_firestoreClean(v, true));
+    if(inArray){
+      const obj={};
+      arr.forEach((v,i)=>{ obj['i'+i]=v; });
+      return obj;
+    }
+    return arr;
+  }
+  const out={};
+  Object.keys(value).forEach(k=>{
+    out[k]=_firestoreClean(value[k], false);
+  });
+  return out;
+}
+function _serializeCoin(c){
+  if(!c) return null;
+  return {
+    owner: c.owner ?? null,
+    face: c.face ?? null,
+    shared: !!c.shared,
+    locked: !!c.locked,
+    type: c.type ?? null,
+    tempLockFor: c.tempLockFor ?? null,
+    tempLockTurns: c.tempLockTurns ?? null
+  };
+}
+function _restoreCoin(c){
+  if(!c) return null;
+  const out={
+    owner: c.owner ?? null,
+    face: c.face ?? FRONT
+  };
+  if(c.shared) out.shared=true;
+  if(c.locked) out.locked=true;
+  if(c.type) out.type=c.type;
+  if(c.tempLockFor !== undefined && c.tempLockFor !== null) out.tempLockFor=c.tempLockFor;
+  if(c.tempLockTurns !== undefined && c.tempLockTurns !== null) out.tempLockTurns=c.tempLockTurns;
+  return out;
+}
+function _serializeBoard(board){
+  const src = Array.isArray(board) ? board : [];
+  const out=[];
+  for(let i=0;i<16;i++) out[i]=_serializeCoin(src[i]);
+  return out;
+}
+function _restoreBoard(board){
+  const src = Array.isArray(board) ? board : [];
+  const out=[];
+  for(let i=0;i<16;i++) out[i]=_restoreCoin(src[i]);
+  return out;
+}
 function _pairArray(value, fallback=[null,null]){
   if(Array.isArray(value)){
     return [
@@ -2473,7 +2531,7 @@ function _serializeGameRecord(rec){
     board: _pairObject(rec.board, [0,0]),
     cards: _pairObject(rec.cards, [0,0]),
     score: _pairObject(rec.score, [0,0]),
-    snapshot: _safeArray(rec.snapshot, Array(16).fill(null)),
+    snapshot: _serializeBoard(rec.snapshot),
     runs: _serializeRuns(rec.runs),
     sets: _pairObject(rec.sets, [0,0])
   };
@@ -2485,7 +2543,7 @@ function _restoreGameRecord(rec){
     board: _pairArray(rec.board, [0,0]),
     cards: _pairArray(rec.cards, [0,0]),
     score: _pairArray(rec.score, [0,0]),
-    snapshot: _safeArray(rec.snapshot, Array(16).fill(null)),
+    snapshot: _serializeBoard(rec.snapshot),
     runs: _restoreRuns(rec.runs),
     sets: _pairArray(rec.sets, [0,0])
   };
@@ -2508,16 +2566,16 @@ function _restoreGameLog(log){
   return arr.filter(Boolean);
 }
 function serializeState(){
-  // Firestore は「配列の中に配列」を保存できない。
-  // hands: [[], []] のような値は {p0: [], p1: []} に変換して保存する。
-  return {
+  // Firestore は「配列の中に配列」を保存できず、undefined も保存できない。
+  // hands: [[], []] のような値は {p0: [], p1: []} に変換し、最後に全体を正規化する。
+  return _firestoreClean({
     phase: S.phase,
     gameIndex: S.gameIndex,
     totals: _pairObject(S.totals, [0,0]),
     gameLog: _serializeGameLog(S.gameLog),
     parent: S.parent,
     current: S.current,
-    board: _safeArray(S.board, Array(16).fill(null)),
+    board: _serializeBoard(S.board),
     coins: _pairObject(S.coins, [8,8]),
     hands: {
       p0: _safeArray(S.hands && S.hands[0]),
@@ -2531,7 +2589,7 @@ function serializeState(){
     lastBreakdown: _serializeGameRecord(S.lastBreakdown),
     pnames: _pairObject(S.pnames, [null,null]),
     finalReason: S._finalReason || null
-  };
+  });
 }
 function restoreState(st){
   S.phase = st.phase;
@@ -2540,7 +2598,7 @@ function restoreState(st){
   S.gameLog = _restoreGameLog(st.gameLog);
   S.parent = st.parent ?? null;
   S.current = st.current ?? null;
-  S.board = _safeArray(st.board, Array(16).fill(null));
+  S.board = _restoreBoard(st.board);
   S.coins = _pairArray(st.coins, [8,8]);
   S.hands = _pairArray(st.hands, [[],[]]).map(v=>_safeArray(v));
   S.designate = _pairArray(st.designate, [null,null]);
