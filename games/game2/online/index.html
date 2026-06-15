@@ -331,7 +331,7 @@
 /* ============================================================
    表裏陣取り — ロジック
    ============================================================ */
-const APP_VERSION='Ver.1.0.4';
+const APP_VERSION='Ver.1.0.5';
 const MY=0, OPP=1; // オンライン: MY=自分, OPP=相手
 const FRONT='f', BACK='b';
 const faceLabel=f=>f===FRONT?'表':'裏';
@@ -1898,20 +1898,58 @@ function selectStateSignature(st){
   const avail = st.sel && Array.isArray(st.sel.available) ? st.sel.available.join(',') : '';
   return [st.phase, st.gameIndex, st.parent, st.current, st.sel.step, avail, hands].join('#');
 }
-function remoteStateIsAhead(st){
-  if(!st || !st.sel || typeof st.sel.step!=='number') return false;
-  if(st.gameIndex !== S.gameIndex) return false;
-
-  // 自分がまだ旧 toss に残っている場合は、select/play の共有状態を優先する。
-  if(S.phase==='toss' && st.phase!=='toss') return true;
-
-  if(S.phase==='select'){
-    if(st.phase==='play') return true;
-    if(st.phase==='select' && S.sel){
-      if(st.sel.step > S.sel.step) return true;
-      if(st.sel.step === S.sel.step && selectStateSignature(st) !== selectStateSignature(serializeState())) return true;
-    }
+function stateSyncSignature(st){
+  if(!st) return '';
+  // Firestore上の gameState を同期の正本として比較するための署名。
+  // UI専用の一時値（pending / busy など）は serializeState に入れていないため、
+  // JSON比較で十分に安定する。
+  try {
+    return JSON.stringify({
+      phase: st.phase,
+      gameIndex: st.gameIndex,
+      totals: st.totals,
+      gameLog: st.gameLog,
+      parent: st.parent,
+      current: st.current,
+      board: st.board,
+      coins: st.coins,
+      hands: st.hands,
+      designate: st.designate,
+      cardLocks: st.cardLocks || [],
+      flipCooldown: st.flipCooldown || [0,0],
+      sel: st.sel || null,
+      over: !!st.over,
+      lastBreakdown: st.lastBreakdown || null
+    });
+  } catch(e){
+    return '';
   }
+}
+function phaseRank(ph){
+  const order={title:0, matchmaking:0, toss:1, select:2, play:3, result:4, final:5};
+  return order[ph] ?? 0;
+}
+function remoteStateIsAhead(st){
+  if(!st || typeof st.gameIndex!=='number') return false;
+
+  // 相手が次ゲーム以降へ進んでいるなら共有状態に追いつく。
+  if(st.gameIndex > S.gameIndex) return true;
+  if(st.gameIndex < S.gameIndex) return false;
+
+  // 自分が旧 toss / select に残っている場合は、より進んだ phase を優先する。
+  if(phaseRank(st.phase) > phaseRank(S.phase)) return true;
+
+  if(st.phase==='select' && S.phase==='select' && st.sel && S.sel){
+    if(typeof st.sel.step==='number' && st.sel.step > S.sel.step) return true;
+    if(typeof st.sel.step==='number' && st.sel.step === S.sel.step && selectStateSignature(st) !== selectStateSignature(serializeState())) return true;
+  }
+
+  // play/result/final は lastAction を取りこぼすと盤面がずれるため、
+  // 同じ phase でも署名が違えば Firestore の gameState を優先して復元する。
+  if(['play','result','final'].includes(st.phase) && st.phase===S.phase){
+    return stateSyncSignature(st) !== stateSyncSignature(serializeState());
+  }
+
   return false;
 }
 function restoreRemoteGameStateIfAhead(st, lastActionId=null){
@@ -1945,10 +1983,10 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
     const d = snap.data();
     S.pnames[0] = d.p0.userName;
     S.pnames[1] = d.p1.userName;
-    if(isRejoin && d.gameState){
+    if(d.gameState){
       restoreState(d.gameState);
-      try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
-      toastMsg('試合に再接続しました');
+      if(isRejoin) try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
+      if(isRejoin) toastMsg('試合に再接続しました');
       render();
       _resetTurnWatchdog();
     } else {
@@ -1991,16 +2029,19 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
       return;
     }
 
-    // gameState を共有状態の正本として扱う。
-    // 特にカード選択は lastAction だけに頼ると取りこぼし・ルール拒否・順序ずれで止まるため、
-    // step/hands が進んでいれば gameState から直接復元する。
-    if(d.gameState && restoreRemoteGameStateIfAhead(d.gameState, d.lastActionId || null)) return;
-
     // 親決め結果は lastAction だけだと、直後の pick で上書きされる可能性がある。
     // そのため room.parentToss を永続フィールドとして見て、受信側が toss で止まらないようにする。
     if(d.parentToss && d.parentToss.gameIndex === S.gameIndex && S.phase === 'toss' && S.parent === null){
       const pt = d.parentToss;
       applyParentTossResult(pt.parent, pt.actionId || `${pt.gameIndex}:${pt.parent}`);
+    }
+
+    // lastAction は上書きされる可能性があるため、まず gameState を正本として確認する。
+    // gameState で追いつけた場合は、同じ行動を lastAction でもう一度適用しない。
+    if(d.gameState && d.lastActionId !== S.lastActionId){
+      if(restoreRemoteGameStateIfAhead(d.gameState, d.lastActionId)){
+        return;
+      }
     }
 
     if(!d.lastAction || d.lastActionId === S.lastActionId) return;
@@ -2054,7 +2095,17 @@ function _processRecvQueue(){
     let w=0;
     const iv0=setInterval(()=>{
       w+=80;
-      if(gateOpen() || w>=15000){ clearInterval(iv0); run(); }
+      if(gateOpen()){
+        clearInterval(iv0);
+        run();
+      } else if(w>=15000){
+        // 準備できていない pick を無理に実行すると commitPick が return し、
+        // 受信済みアクションを捨ててしまう。捨てずにキューへ戻す。
+        clearInterval(iv0);
+        _recvProcessing = false;
+        _recvQueue.unshift(action);
+        setTimeout(_processRecvQueue, 500);
+      }
     }, 80);
   } else {
     run();
@@ -2200,49 +2251,19 @@ function restoreState(st){
 }
 
 /* ---- アクション送信 ---- */
-
-async function sendSelectState(cardId){
-  if(!S.roomId) return false;
-  const state = serializeState();
-  const actionId = crypto.randomUUID();
-
-  // 第1候補：既存の lastAction と gameState を同時に更新する。
-  // 受信側は gameState を優先して復元するため、lastAction の取りこぼしに依存しない。
-  try {
-    await updateDoc(doc(db,'rooms', S.roomId), {
-      lastAction: {type:'pick', card:cardId},
-      lastActionId: actionId,
-      gameState: state
-    });
-    S.lastActionId = actionId;
-    setTimeout(()=>_resetTurnWatchdog(), 100);
-    return true;
-  } catch(e1){
-    console.warn('pick通知の送信に失敗。gameStateのみで再送します', e1);
-  }
-
-  // 第2候補：lastAction を使わず gameState だけを更新する。
-  // 受信側は onSnapshot の gameState 復元だけでカード選択を進められる。
-  try {
-    await updateDoc(doc(db,'rooms', S.roomId), {gameState: state});
-    setTimeout(()=>_resetTurnWatchdog(), 100);
-    return true;
-  } catch(e2){
-    toastMsg('通信エラーが発生しました');
-    console.error(e2);
-    return false;
-  }
-}
-
-async function sendAction(action, stateOverride=null){
+async function sendAction(action){
   if(!S.roomId) return false;
   const actionId = crypto.randomUUID();
   S.lastActionId = actionId;
   try {
+    // 多くのローカル処理は sendAction() の直後に afterAction() で状態を進める。
+    // ここで1マイクロタスクだけ待つことで、Firestoreへ保存する gameState を
+    // 「行動後の確定状態」に寄せる。lastAction は補助、gameState が正本。
+    await Promise.resolve();
     const payload = {
       lastAction: action,
       lastActionId: actionId,
-      gameState: stateOverride || serializeState()
+      gameState: serializeState()
     };
 
     // 親決め結果だけは「一時的な最新アクション」ではなく、
@@ -2259,6 +2280,25 @@ async function sendAction(action, stateOverride=null){
     }
 
     await updateDoc(doc(db,'rooms', S.roomId), payload);
+    setTimeout(()=>_resetTurnWatchdog(), 100);
+    return true;
+  } catch(e){
+    toastMsg('通信エラーが発生しました');
+    console.error(e);
+    return false;
+  }
+}
+
+async function sendSelectState(cardId){
+  if(!S.roomId) return false;
+  const actionId = crypto.randomUUID();
+  S.lastActionId = actionId;
+  try {
+    await updateDoc(doc(db,'rooms', S.roomId), {
+      lastAction: {type:'pick', card:cardId},
+      lastActionId: actionId,
+      gameState: serializeState()
+    });
     setTimeout(()=>_resetTurnWatchdog(), 100);
     return true;
   } catch(e){
