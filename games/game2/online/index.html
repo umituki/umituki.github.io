@@ -344,7 +344,7 @@ const pname=p=> escapeHTML((S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あ
 const isHuman=p=> S && S.myRole!==null ? p===S.myRole : p===MY;  // 自分のroleと一致するプレイヤーのみ操作可
 // 設定は match を跨いで保持（newMatchでリセットしない）
 let SETTINGS={ sound:true, anim:true, shake:true };
-const APP_VERSION='Ver.1.0.20';
+const APP_VERSION='Ver.1.1.2';
 
 const CARD_INFO={
   shitei:{name:'指定', desc:'次の相手と自分のコイントス結果を、選択した向きに固定する。', prio:6},
@@ -1189,7 +1189,7 @@ function renderMatchmaking(){
     <div class="title-wrap">
       <div class="eyebrow">フリーマッチ</div>
       <h1 class="title" style="font-size:28px">対戦相手を探しています…</h1>
-      <div class="thinking" style="margin:24px auto"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
+      <div class="thinking" style="margin:24px auto;justify-content:center;width:100%"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
       <p class="subtitle" id="mm-status">待機中</p>
       <div class="title-actions" style="margin-top:24px">
         <button class="btn ghost" id="mm-cancel">キャンセル</button>
@@ -1502,6 +1502,7 @@ function cancelMoveFrom(){
 
 function renderResult(){
   const r=S.lastBreakdown;
+  const resultGameIndex = S.gameIndex;
   const last=S.gameIndex>=2;
   const row=(p)=>`<div class="sb-row">
       <div class="sb-name"><span class="dot p${p}"></span>${pname(p)} ${S.parent===p?'<span class="badge oya" style="margin-left:4px">親</span>':''}</div>
@@ -1537,12 +1538,11 @@ function renderResult(){
     if(cdEl()) cdEl().textContent = last ? `${cd}秒後に最終結果へ…` : `${cd}秒後に次のゲームへ…`;
     if(cd<=0){
       clearInterval(S._resultTimer);
-      // 両者とも各自カウントダウンで次へ進む。
-      // 次ゲームの parent は gameLog から決まるため両者一致する（送信不要）。
-      // クライアント間のタイマー誤差によるフェーズずれは、
-      // 最初の pick に付与した forGameIndex を受信側が見て追いつくことで吸収する
-      // （commitPick送信・_receiveAction case 'pick' を参照）。
-      if(window.FB && FB.advanceAfterResult){ FB.advanceAfterResult(); }
+      // 片方がFirestore経由で次ゲームへ進んだ場合、もう片方の古いresultタイマーが残って
+      // nextGame()を二重実行し、2ゲームで終わる原因になる。
+      // このタイマーが作られた時点のゲーム番号・phaseと一致する場合だけ進める。
+      if(S.phase !== 'result' || S.gameIndex !== resultGameIndex) return;
+      if(window.FB && FB.advanceAfterResult){ FB.advanceAfterResult(resultGameIndex); }
       else nextGame();
     }
   }, 1000);
@@ -2213,6 +2213,8 @@ function _applyAuthoritativeStateIfNeeded(remoteState, actionId=null){
 
   // result後の次ゲーム開始など、Firestore上のgameIndexが先へ進んでいる場合は確定状態へ追いつく。
   if(typeof remoteState.gameIndex === 'number' && typeof S.gameIndex === 'number' && remoteState.gameIndex > S.gameIndex){
+    clearInterval(S._resultTimer);
+    S._resultTimer = null;
     restoreState(remoteState);
     if(actionId) S.lastActionId = actionId;
     render();
@@ -2666,6 +2668,10 @@ function restoreState(st){
   S._preservePending = (prevPending && prevPending.type==='placeCell' && prevPhase==='play' && st && st.phase==='play' && prevCurrent===S.myRole)
     ? {...prevPending, face: prevPending.face || prevPlacingFace}
     : null;
+  if(prevPhase === 'result' && st.phase !== 'result'){
+    clearInterval(S._resultTimer);
+    S._resultTimer = null;
+  }
   S.phase = st.phase;
   S.gameIndex = st.gameIndex ?? 0;
   S.totals = _pairArray(st.totals, [0,0]);
@@ -2795,10 +2801,16 @@ async function syncState(reason='state'){
   } catch(e){ console.warn('状態同期に失敗', reason, e); }
 }
 
-async function advanceAfterResult(){
+async function advanceAfterResult(expectedGameIndex=null){
+  // 古いリザルト画面のタイマーから呼ばれた場合は無視する。
+  if(S.phase !== 'result') return;
+  if(expectedGameIndex !== null && S.gameIndex !== expectedGameIndex) return;
+  clearInterval(S._resultTimer);
+  S._resultTimer = null;
   nextGame();
-  if(S.roomId && S.phase !== 'final'){
-    await syncState('nextGame');
+  // final もFirestoreへ同期する。片方だけ最終結果へ進むことを防ぐ。
+  if(S.roomId){
+    await syncState(S.phase === 'final' ? 'final' : 'nextGame');
   }
 }
 
@@ -2830,14 +2842,14 @@ function _receiveAction(action){
           if(S.coins[opp]===0) S._justPlacedEighth=true;
           setLastMove(`${pname(opp)}：${faceLabel(action.face)}を配置`);
           S.pending=null;
-          _afterRemoteAction(action);
+          __afterRemoteAction(action);
         }, action.face);
       } else {
         placeCoin(opp, action.cell, action.face);
         if(S.coins[opp]===0) S._justPlacedEighth=true;
         setLastMove(`${pname(opp)}：${faceLabel(action.face)}を配置`);
         S.pending=null;
-        _afterRemoteAction(action);
+        __afterRemoteAction(action);
       }
       break;
 
@@ -2847,7 +2859,7 @@ function _receiveAction(action){
         if(!S.flipCooldown) S.flipCooldown=[0,0];
         S.flipCooldown[opp]=2;
         sfx('flip'); shakeScreen(); setLastMove(`${pname(opp)}：コインを裏返した`);
-        S.pending=null; _afterRemoteAction(action); }
+        S.pending=null; __afterRemoteAction(action); }
       break;
 
     case 'card':
