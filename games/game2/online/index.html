@@ -333,12 +333,18 @@
    ============================================================ */
 const MY=0, OPP=1; // オンライン: MY=自分, OPP=相手
 const FRONT='f', BACK='b';
+function escapeHTML(v){
+  return String(v ?? '').replace(/[&<>"']/g, m=>({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[m]));
+}
+window.escapeHTML = escapeHTML;
 const faceLabel=f=>f===FRONT?'表':'裏';
-const pname=p=> (S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あなた':'相手');
+const pname=p=> escapeHTML((S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あなた':'相手'));
 const isHuman=p=> S && S.myRole!==null ? p===S.myRole : p===MY;  // 自分のroleと一致するプレイヤーのみ操作可
 // 設定は match を跨いで保持（newMatchでリセットしない）
 let SETTINGS={ sound:true, anim:true, shake:true };
-const APP_VERSION='Ver.1.0.12';
+const APP_VERSION='Ver.1.0.13';
 
 const CARD_INFO={
   shitei:{name:'指定', desc:'次の相手と自分のコイントス結果を、選択した向きに固定する。', prio:6},
@@ -609,6 +615,9 @@ function endGame(){
   S.phase='result';
   sfx('end');
   render();
+  if(window.FB && FB.syncState){
+    setTimeout(()=>FB.syncState('result'), 0);
+  }
 }
 function nextGame(){
   S.gameIndex++;
@@ -1099,8 +1108,8 @@ function renderTitle(){
       <p class="subtitle">コインの向きを操り、同じ向き3枚を揃える。全3ゲームの合計点で競う。</p>
       ${user ? `
         <div class="user-badge">
-          <span class="user-name">${user.name}</span>
-          <span class="user-id">#${user.id}</span>
+          <span class="user-name">${escapeHTML(user.name)}</span>
+          <span class="user-id">#${escapeHTML(user.id)}</span>
         </div>
         <div class="title-actions">
           <button class="btn" id="online-btn">オンライン対戦</button>
@@ -1479,7 +1488,8 @@ function renderResult(){
       // クライアント間のタイマー誤差によるフェーズずれは、
       // 最初の pick に付与した forGameIndex を受信側が見て追いつくことで吸収する
       // （commitPick送信・_receiveAction case 'pick' を参照）。
-      nextGame();
+      if(window.FB && FB.advanceAfterResult){ FB.advanceAfterResult(); }
+      else nextGame();
     }
   }, 1000);
 }
@@ -1571,6 +1581,31 @@ function renderFinal(){
   }
   document.getElementById('title-btn').onclick=()=>{ sfx('click'); FB.leaveRoom(); newMatch(); render(); };
   document.getElementById('rules').onclick=showRules;
+}
+
+
+function buildSurrenderFinal(loserRole, shouldRender=false){
+  const winner = loserRole===0 ? 1 : 0;
+  S.pending=null;
+  S.busy=false;
+  S.over=true;
+  S._finalReason='surrender';
+  while(S.gameLog.length < 3){
+    const score = winner===0 ? [9,0] : [0,9];
+    S.totals[0]+=score[0];
+    S.totals[1]+=score[1];
+    S.gameLog.push({
+      parent: S.parent ?? 0,
+      board: [0,0],
+      cards: [0,0],
+      score,
+      snapshot: cloneBoard(S.board || Array(16).fill(null)),
+      runs: [],
+      sets: [0,0]
+    });
+  }
+  S.phase='final';
+  if(shouldRender) render();
 }
 
 function askSurrender(player){
@@ -1708,6 +1743,9 @@ const firebaseConfig = {
 
 const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
+const escapeHTML = window.escapeHTML || ((v)=>String(v ?? '').replace(/[&<>"']/g, m=>({
+  '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+}[m])));
 
 /* ---- ユーザー管理 ---- */
 const LS_USER = 'omote_user';
@@ -1756,6 +1794,33 @@ let _queueUnsub = null;
 let _queueTimeout = null;
 let _matchmakingActive = false;
 const QUEUE_STALE_MS = 120000;
+let _heartbeatTimer = null;
+const HEARTBEAT_MS = 15000;
+const HEARTBEAT_STALE_MS = 45000;
+function _stopHeartbeat(){
+  if(_heartbeatTimer){ clearInterval(_heartbeatTimer); _heartbeatTimer=null; }
+}
+function _lastSeenPatch(role){
+  return {
+    ['lastSeen.p'+role]: Date.now(),
+    ['lastSeenAt.p'+role]: serverTimestamp()
+  };
+}
+function _startHeartbeat(roomRef, role){
+  _stopHeartbeat();
+  const beat=()=>{
+    if(!S.roomId || S.myRole===null || ['title','matchmaking','final'].includes(S.phase)) return;
+    updateDoc(roomRef, _lastSeenPatch(role)).catch(()=>{});
+  };
+  beat();
+  _heartbeatTimer=setInterval(beat, HEARTBEAT_MS);
+}
+function _isOpponentStale(data, myRole){
+  if(!data || !data.lastSeen) return false;
+  const opp = myRole===0 ? 1 : 0;
+  const v = data.lastSeen['p'+opp];
+  return typeof v === 'number' && Date.now() - v > HEARTBEAT_STALE_MS;
+}
 
 async function joinMatchQueue(){
   const user = loadLocalUser();
@@ -1767,7 +1832,7 @@ async function joinMatchQueue(){
   if(active && active.roomId){
     try {
       const rsnap = await getDoc(doc(db,'rooms', active.roomId));
-      if(rsnap.exists() && !['abandoned','finished'].includes(rsnap.data().status)){
+      if(rsnap.exists() && !['abandoned','finished','surrendered'].includes(rsnap.data().status)){
         toastMsg('進行中の試合に再接続します…');
         _matchmakingActive = false;
         _subscribeRoom(active.roomId, active.myRole, true);
@@ -1855,7 +1920,7 @@ async function _findMyRoom(user, retries=0){
     await deleteDoc(pendingRef);
     if(roomId){
       const roomSnap = await getDoc(doc(db, 'rooms', roomId));
-      if(roomSnap.exists() && !['abandoned','finished'].includes(roomSnap.data().status)){
+      if(roomSnap.exists() && !['abandoned','finished','surrendered'].includes(roomSnap.data().status)){
         _matchmakingActive = false;
         _subscribeRoom(roomId, 0);
         return;
@@ -1886,6 +1951,8 @@ async function _createRoom(p0, p1){
     lastAction: null,
     lastActionId: null,
     disconnected: null,
+    lastSeen: {p0: Date.now(), p1: Date.now()},
+    lastSeenAt: {p0: serverTimestamp(), p1: serverTimestamp()},
     createdAt: serverTimestamp()
   });
 
@@ -1930,6 +1997,7 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
   if(_queueUnsub){ _queueUnsub(); _queueUnsub=null; }
   clearTimeout(_queueTimeout);
   if(_roomUnsub){ _roomUnsub(); _roomUnsub=null; }
+  _stopHeartbeat();
   if(window._onBeforeUnload){
     window.removeEventListener('beforeunload', window._onBeforeUnload);
     window._onBeforeUnload = null;
@@ -1996,10 +2064,11 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
 
   window._onBeforeUnload = ()=>{
     if(S.roomId && S.phase && !['title','matchmaking','final'].includes(S.phase)){
-      try { updateDoc(roomRef, {disconnected: myRole, disconnectedAt: serverTimestamp()}); } catch(e){}
+      try { updateDoc(roomRef, {disconnected: myRole, disconnectedAt: serverTimestamp(), ..._lastSeenPatch(myRole)}); } catch(e){}
     }
   };
   window.addEventListener('beforeunload', window._onBeforeUnload);
+  _startHeartbeat(roomRef, myRole);
 
   _roomUnsub = onSnapshot(roomRef, snap=>{
     if(!snap.exists()){
@@ -2018,6 +2087,21 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
       _showRoomAbandonedNotice('相手が試合を破棄しました');
       return;
     }
+    if(d.status === 'surrendered'){
+      if(d.surrenderedBy === myRole){
+        _clearActiveRoom();
+        return;
+      }
+      _stopHeartbeat();
+      _clearActiveRoom();
+      if(d.gameState){
+        restoreState(d.gameState);
+        render();
+      } else {
+        toastMsg('相手が投降しました');
+      }
+      return;
+    }
     if(d.status === 'finished'){
       _clearActiveRoom();
       if(d.gameState && S.phase !== 'final'){
@@ -2029,6 +2113,10 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
 
     if(d.disconnected !== null && d.disconnected !== undefined && d.disconnected !== myRole){
       _handleDisconnect(d.disconnected, roomId);
+      return;
+    }
+    if(_isOpponentStale(d, myRole)){
+      _handleDisconnect(myRole===0?1:0, roomId, '相手の接続が一定時間確認できません');
       return;
     }
 
@@ -2061,6 +2149,14 @@ function _applyAuthoritativeStateIfNeeded(remoteState, actionId=null){
   if(S.phase==='toss' && remoteState.phase==='select' && remoteState.sel){
     restoreState(remoteState);
     if(actionId) S.lastActionId = actionId; // stateに含まれるactionは二重適用しない
+    render();
+    return true;
+  }
+
+  // result後の次ゲーム開始など、Firestore上のgameIndexが先へ進んでいる場合は確定状態へ追いつく。
+  if(typeof remoteState.gameIndex === 'number' && typeof S.gameIndex === 'number' && remoteState.gameIndex > S.gameIndex){
+    restoreState(remoteState);
+    if(actionId) S.lastActionId = actionId;
     render();
     return true;
   }
@@ -2126,6 +2222,16 @@ function _processRecvQueue(){
   };
   const run = ()=>{
     try {
+      if(remoteState && ['result','final'].includes(remoteState.phase)){
+        const sameOrNewerGame = (remoteState.gameIndex ?? 0) >= (S.gameIndex ?? 0);
+        if(sameOrNewerGame && S.phase !== remoteState.phase){
+          restoreState(remoteState);
+          render();
+          _recvProcessing = false;
+          _processRecvQueue();
+          return;
+        }
+      }
       _receiveAction(action);
     } catch(e){
       console.error('受信アクションの適用に失敗', action, e);
@@ -2178,6 +2284,7 @@ function _showRoomAbandonedNotice(message='試合が破棄されました'){
   if(_abandonedNoticeShown) return;
   _abandonedNoticeShown = true;
   clearTimeout(_turnWatchdog);
+  _stopHeartbeat();
   _clearActiveRoom();
   if(_roomUnsub){ _roomUnsub(); _roomUnsub=null; }
   if(window._onBeforeUnload){
@@ -2190,7 +2297,7 @@ function _showRoomAbandonedNotice(message='試合が破棄されました'){
   const bg = document.createElement('div'); bg.className='modal-bg';
   bg.innerHTML=`<div class="modal">
     <h3>試合が破棄されました</h3>
-    <p class="picker-note">${message}。<br>この試合は終了しました。</p>
+    <p class="picker-note">${escapeHTML(message)}。<br>この試合は終了しました。</p>
     <div class="close-row">
       <button class="btn" id="abandoned-ok">了承</button>
     </div>
@@ -2214,7 +2321,7 @@ function _handleDisconnect(disconnectedRole, roomId, customMsg){
   const bg = document.createElement('div'); bg.className='modal-bg';
   bg.innerHTML=`<div class="modal">
     <h3>⚠️ 接続の問題</h3>
-    <p class="picker-note">${msg}。<br>再接続を待つか、試合を破棄してください。</p>
+    <p class="picker-note">${escapeHTML(msg)}。<br>再接続を待つか、試合を破棄してください。</p>
     <p class="picker-note" id="dc-timer" style="color:var(--p1);font-weight:700">60秒後に自動破棄されます</p>
     <div class="close-row">
       <button class="btn ghost sm" id="dc-wait">再接続を待つ</button>
@@ -2259,6 +2366,7 @@ async function _abandonMatch(roomId, bg){
       abandonedAt: serverTimestamp(),
       disconnected: null,
       gameState: serializeState(),
+      ..._lastSeenPatch(S.myRole),
       updatedAt: serverTimestamp()
     });
   } catch(e){
@@ -2276,6 +2384,7 @@ function leaveRoom(){
     window._onBeforeUnload = null;
   }
   clearTimeout(_turnWatchdog);
+  _stopHeartbeat();
   _disconnectModalShown = false;
   _abandonedNoticeShown = false;
   _clearActiveRoom();
@@ -2284,6 +2393,7 @@ function leaveRoom(){
 
 async function finishRoom(){
   clearTimeout(_turnWatchdog);
+  _stopHeartbeat();
   if(window._onBeforeUnload){
     window.removeEventListener('beforeunload', window._onBeforeUnload);
     window._onBeforeUnload = null;
@@ -2298,7 +2408,9 @@ async function finishRoom(){
         status: 'finished',
         finishedAt: serverTimestamp(),
         gameState: finalState,
-        disconnected: null
+        disconnected: null,
+        ..._lastSeenPatch(S.myRole),
+        updatedAt: serverTimestamp()
       });
     } catch(e){ console.warn('ルーム終了状態の保存に失敗', e); }
   }
@@ -2417,7 +2529,8 @@ function serializeState(){
     sel: S.sel ? { available: Array.from(S.sel.available), order: _safeArray(S.sel.order), step: S.sel.step } : null,
     over: !!S.over,
     lastBreakdown: _serializeGameRecord(S.lastBreakdown),
-    pnames: _pairObject(S.pnames, [null,null])
+    pnames: _pairObject(S.pnames, [null,null]),
+    finalReason: S._finalReason || null
   };
 }
 function restoreState(st){
@@ -2437,6 +2550,7 @@ function restoreState(st){
   S.over = !!st.over;
   S.lastBreakdown = _restoreGameRecord(st.lastBreakdown);
   if(st.pnames) S.pnames = _pairArray(st.pnames, [null,null]);
+  S._finalReason = st.finalReason || null;
   S.pending = null;
   S.busy = false;
 }
@@ -2456,7 +2570,8 @@ async function commitParentToss(parent){
     await updateDoc(doc(db,'rooms', roomId), {
       gameState: nextState,
       gameIndex: S.gameIndex,
-      totals: S.totals,
+      totals: _pairObject(S.totals, [0,0]),
+      ..._lastSeenPatch(S.myRole),
       updatedAt: serverTimestamp()
     });
     render();
@@ -2476,17 +2591,39 @@ async function sendAction(action){
   try {
     // 呼び出し元は多くの場合、sendAction の直後に afterAction() でターンを進める。
     // ここで一度イベントループに戻し、最終状態を serializeState() に載せる。
-    await Promise.resolve();
+    await new Promise(r=>setTimeout(r, 0));
     await updateDoc(doc(db,'rooms', roomId), {
       lastAction: {...action, senderRole:S.myRole, sentAtMs:Date.now()},
       lastActionId: actionId,
       gameState: serializeState(),
+      ..._lastSeenPatch(S.myRole),
       updatedAt: serverTimestamp()
     });
     setTimeout(()=>_resetTurnWatchdog(), 100);
   } catch(e){
     toastMsg('通信エラーが発生しました');
     console.error(e);
+  }
+}
+
+
+async function syncState(reason='state'){
+  if(!S.roomId) return;
+  try {
+    await updateDoc(doc(db,'rooms', S.roomId), {
+      gameState: serializeState(),
+      gameIndex: S.gameIndex,
+      ..._lastSeenPatch(S.myRole),
+      updatedAt: serverTimestamp(),
+      syncReason: reason
+    });
+  } catch(e){ console.warn('状態同期に失敗', reason, e); }
+}
+
+async function advanceAfterResult(){
+  nextGame();
+  if(S.roomId && S.phase !== 'final'){
+    await syncState('nextGame');
   }
 }
 
@@ -2556,21 +2693,8 @@ function _receiveAction(action){
       clearTimeout(_turnWatchdog);
       toastMsg(`${pname(opp)} が投降しました`);
       setTimeout(()=>{
-        while(S.gameLog.length < 3){
-          const fakeScore = S.myRole===0 ? [9,0] : [0,9];
-          S.totals[0]+=fakeScore[0]; S.totals[1]+=fakeScore[1];
-          S.gameLog.push({
-            parent: S.parent||0,
-            board: [0,0],
-            cards: [0,0],
-            score: fakeScore,
-            snapshot: Array(16).fill(null),
-            runs: [],
-            sets: [0,0]
-          });
-        }
-        S.phase='final'; render();
-      }, 800);
+        buildSurrenderFinal(opp, true);
+      }, 400);
       break;
   }
 }
@@ -2626,23 +2750,49 @@ function _receiveCard(action, opp){
 
 /* ---- 投降 ---- */
 async function surrender(){
-  _clearActiveRoom();
-  await sendAction({type:'surrender'});
-  const user = loadLocalUser();
-  if(!user){ leaveRoom(); newMatch(); render(); return; }
-  const uref = doc(db,'users', user.docId);
-  const usnap = await getDoc(uref);
-  if(usnap.exists()){
-    const d = usnap.data();
-    const history = [{result:'lose', opponentName:S.pnames[S.myRole^1], date:new Date().toLocaleDateString('ja-JP')}, ...(d.history||[])].slice(0,10);
-    await updateDoc(uref, {losses:(d.losses||0)+1, streak:0, history});
-    saveLocalUser({...user, losses:(user.losses||0)+1, streak:0, history});
-  }
+  if(!S.roomId || S.myRole===null) return;
   const rid = S.roomId;
+  const loserRole = S.myRole;
+  const prevState = serializeState();
+  buildSurrenderFinal(loserRole, false);
+  const finalState = serializeState();
+  restoreState(prevState);
+
+  try {
+    await updateDoc(doc(db,'rooms', rid), {
+      status: 'surrendered',
+      surrenderedBy: loserRole,
+      surrenderedAt: serverTimestamp(),
+      gameState: finalState,
+      disconnected: null,
+      ..._lastSeenPatch(loserRole),
+      updatedAt: serverTimestamp()
+    });
+  } catch(e){
+    console.error('投降状態の保存に失敗', e);
+    toastMsg('投降の送信に失敗しました');
+    return;
+  }
+
+  const user = loadLocalUser();
+  if(user){
+    try {
+      const uref = doc(db,'users', user.docId);
+      const usnap = await getDoc(uref);
+      if(usnap.exists()){
+        const d = usnap.data();
+        const history = [{result:'lose', opponentName:S.pnames[S.myRole^1] || '相手', date:new Date().toLocaleDateString('ja-JP')}, ...(d.history||[])].slice(0,10);
+        await updateDoc(uref, {losses:(d.losses||0)+1, streak:0, history});
+        saveLocalUser({...user, losses:(user.losses||0)+1, streak:0, history});
+      }
+    } catch(e){ console.warn('投降敗北の戦績保存に失敗', e); }
+  }
+
   clearTimeout(_turnWatchdog);
+  _stopHeartbeat();
   if(window._onBeforeUnload){ window.removeEventListener('beforeunload', window._onBeforeUnload); window._onBeforeUnload=null; }
   if(_roomUnsub){ _roomUnsub(); _roomUnsub=null; }
-  setTimeout(async()=>{ if(rid){ try{ await deleteDoc(doc(db,'rooms',rid)); }catch(e){} } }, 2000);
+  _clearActiveRoom();
   S.roomId=null; S.myRole=null;
   newMatch(); render();
 }
@@ -2694,7 +2844,7 @@ function showRegisterModal(){
     document.getElementById('reg-ok').textContent='登録中…';
     const user = await createUser(name);
     bg.remove();
-    toastMsg(`ようこそ、${user.name}#${user.id} さん！`);
+    toastMsg(`ようこそ、${escapeHTML(user.name)}#${escapeHTML(user.id)} さん！`);
     render();
   };
   document.getElementById('reg-ok').onclick=ok;
@@ -2730,7 +2880,7 @@ function showTransferModal(){
     const user = await transferUser(name, id);
     if(user){
       bg.remove();
-      toastMsg(`引き継ぎ完了：${user.name}#${user.id}`);
+      toastMsg(`引き継ぎ完了：${escapeHTML(user.name)}#${escapeHTML(user.id)}`);
       render();
     } else {
       toastMsg('一致するユーザーが見つかりませんでした');
@@ -2750,13 +2900,13 @@ function showRecordModal(){
   const rate = total>0 ? Math.round((user.wins||0)/total*100) : 0;
   const histRows = (user.history||[]).map(h=>{
     const icon = h.result==='win'?'🏆':h.result==='lose'?'💀':'🤝';
-    return `<div class="sb-row"><div>${icon} ${h.result==='win'?'勝利':h.result==='lose'?'敗北':'引き分け'}</div><div>${h.opponentName}</div><div>${h.date}</div></div>`;
+    return `<div class="sb-row"><div>${icon} ${h.result==='win'?'勝利':h.result==='lose'?'敗北':'引き分け'}</div><div>${escapeHTML(h.opponentName)}</div><div>${escapeHTML(h.date)}</div></div>`;
   }).join('') || '<div class="picker-note">対戦履歴がありません</div>';
   const bg=document.createElement('div'); bg.className='modal-bg';
   bg.innerHTML=`<div class="modal">
     <h3>戦績</h3>
     <div class="user-badge" style="margin-bottom:16px">
-      <span class="user-name">${user.name}</span><span class="user-id">#${user.id}</span>
+      <span class="user-name">${escapeHTML(user.name)}</span><span class="user-id">#${escapeHTML(user.id)}</span>
     </div>
     <div class="scoreboard">
       <div class="sb-row head"><div>勝</div><div>負</div><div>分</div><div>勝率</div><div>連勝</div></div>
@@ -2780,6 +2930,8 @@ window.FB = {
   finishRoom,
   commitParentToss,
   sendAction,
+  syncState,
+  advanceAfterResult,
   saveMatchResult,
   surrender,
   showRegisterModal,
@@ -2802,7 +2954,7 @@ async function _cleanupStaleEntries(){
     if(psnap.exists()){
       const {roomId} = psnap.data();
       const rsnap = roomId ? await getDoc(doc(db,'rooms', roomId)) : null;
-      if(!rsnap || !rsnap.exists() || ['abandoned','finished'].includes(rsnap.data().status)){
+      if(!rsnap || !rsnap.exists() || ['abandoned','finished','surrendered'].includes(rsnap.data().status)){
         await deleteDoc(pref);
       }
     }
@@ -2822,6 +2974,14 @@ async function _checkRejoin(){
       _showRoomAbandonedNotice('相手が試合を破棄しました');
       return;
     }
+    if(rsnap.data().status === 'surrendered'){
+      if(rsnap.data().gameState && rsnap.data().surrenderedBy !== active.myRole){
+        _subscribeRoom(active.roomId, active.myRole, true);
+      } else {
+        _clearActiveRoom();
+      }
+      return;
+    }
     if(rsnap.data().status === 'finished'){
       _clearActiveRoom();
       return;
@@ -2831,7 +2991,7 @@ async function _checkRejoin(){
     const bg=document.createElement('div'); bg.className='modal-bg';
     bg.innerHTML=`<div class="modal">
       <h3>中断した試合があります</h3>
-      <p class="picker-note">${oppName} との試合が進行中です。<br>再接続しますか？</p>
+      <p class="picker-note">${escapeHTML(oppName)} との試合が進行中です。<br>再接続しますか？</p>
       <div class="close-row">
         <button class="btn ghost sm" id="rj-quit">破棄する</button>
         <button class="btn" id="rj-go">再接続する</button>
@@ -2850,6 +3010,7 @@ async function _checkRejoin(){
           abandonedBy: active.myRole,
           abandonedAt: serverTimestamp(),
           disconnected: null,
+          ..._lastSeenPatch(active.myRole),
           updatedAt: serverTimestamp()
         });
       } catch(e){ console.warn('試合破棄状態の保存に失敗', e); }
