@@ -344,7 +344,7 @@ const pname=p=> escapeHTML((S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あ
 const isHuman=p=> S && S.myRole!==null ? p===S.myRole : p===MY;  // 自分のroleと一致するプレイヤーのみ操作可
 // 設定は match を跨いで保持（newMatchでリセットしない）
 let SETTINGS={ sound:true, anim:true, shake:true };
-const APP_VERSION='Ver.1.0.15';
+const APP_VERSION='Ver.1.0.17';
 
 const CARD_INFO={
   shitei:{name:'指定', desc:'次の相手と自分のコイントス結果を、選択した向きに固定する。', prio:6},
@@ -435,7 +435,15 @@ function scoringRuns(board){
   }
   return runs;
 }
-const cloneBoard=b=>_serializeBoard(b);
+const cloneBoard=b=>b.map(c=>c?{
+  owner: c.owner ?? null,
+  face: c.face ?? null,
+  shared: !!c.shared,
+  locked: !!c.locked,
+  type: c.type ?? null,
+  tempLockFor: c.tempLockFor ?? null,
+  tempLockTurns: c.tempLockTurns ?? null
+}:null);
 const emptyCells=b=>{const a=[];for(let i=0;i<16;i++) if(!b[i]) a.push(i); return a;};
 const ownCoins=(b,p)=>{const a=[];for(let i=0;i<16;i++){const c=b[i]; if(c&&(c.owner===p||c.shared||c.type==='puppet')) a.push(i);} return a;};
 const toss=()=>Math.random()<.5?FRONT:BACK;
@@ -602,7 +610,7 @@ function lockedCount(player,card){
 function endGame(){
   S.over=true; S.busy=false; S.pending=null;
   clearTimeout(S._resultTimer);
-  if(window._resetTurnWatchdog) clearTimeout(_turnWatchdog);
+  if(window._clearTurnWatchdog) window._clearTurnWatchdog();
   const bs=boardScore(S.board);
   const cardPts=[S.hands[0].length, S.hands[1].length];
   const total=[bs[0]+cardPts[0], bs[1]+cardPts[1]];
@@ -843,6 +851,20 @@ function cardUsable(player,cardId){
   return false;
 }
 function countCard(player,card){ return S.hands[player].filter(c=>c===card).length; }
+
+/*
+   通常<script>側から呼ばれる共通アクション確定処理。
+   Ver.1.0.15では同名関数をFirebaseのmodule内に置いたため、通常<script>側の
+   clickCell/startCardUse から参照できず、コイン配置時にReferenceErrorで停止していた。
+   ここに置くことで、盤面更新→終了判定→確定済みgameState送信の順を保つ。
+*/
+function finishLocalAction(action, actionEndsGame=false, reason='action'){
+  const ended = afterAction(!!actionEndsGame);
+  if(action && window.FB && FB.sendActionNow){
+    FB.sendActionNow({...action, endsGame: ended, finalPhase: S.phase}, reason);
+  }
+  return ended;
+}
 
 /* ============================================================
    コイントス演出
@@ -2268,6 +2290,7 @@ function _resetTurnWatchdog(){
   }, TURN_TIMEOUT_MS);
 }
 window._resetTurnWatchdog = _resetTurnWatchdog;
+window._clearTurnWatchdog = function(){ clearTimeout(_turnWatchdog); _turnWatchdog = null; };
 
 let _disconnectModalShown = false;
 let _abandonedNoticeShown = false;
