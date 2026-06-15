@@ -344,7 +344,7 @@ const pname=p=> escapeHTML((S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あ
 const isHuman=p=> S && S.myRole!==null ? p===S.myRole : p===MY;  // 自分のroleと一致するプレイヤーのみ操作可
 // 設定は match を跨いで保持（newMatchでリセットしない）
 let SETTINGS={ sound:true, anim:true, shake:true };
-const APP_VERSION='Ver.1.0.17';
+const APP_VERSION='Ver.1.0.18';
 
 const CARD_INFO={
   shitei:{name:'指定', desc:'次の相手と自分のコイントス結果を、選択した向きに固定する。', prio:6},
@@ -468,6 +468,7 @@ function newMatch(){
     designate:[null,null],
     sel:null,
     pending:null,
+    _placingFace:null,
     over:false,
     lastBreakdown:null,
     busy:false,
@@ -487,7 +488,7 @@ function startGame(){
   S.coins=[8,8];
   S.hands=[[],[]];
   S.designate=[null,null];
-  S.pending=null; S.over=false; S.busy=false; S.lastMove=null;
+  S.pending=null; S._placingFace=null; S.over=false; S.busy=false; S.lastMove=null;
   S.surrenderVotes=[null,null];
   S.cardLocks=[];
   S.flipCooldown=[0,0];
@@ -644,10 +645,12 @@ function humanAction(type, fixedTossResult=null){
   if(type==='place'){
     if(S.coins[p]<=0 || emptyCells(S.board).length===0) return;
     if(S.designate[p]){
+      S._placingFace=S.designate[p];
       S.pending={type:'placeCell', face:S.designate[p], designated:true};
       render();
     } else {
       doToss(face=>{
+        S._placingFace=face;
         S.pending={type:'placeCell', face};
         render();
       }, fixedTossResult);
@@ -709,7 +712,13 @@ function consumeCard(player,cardId){
 }
 
 function clickCell(idx){
-  if(!isHuman(S.current)||S.busy||!S.pending) return;
+  if(!isHuman(S.current)||S.busy) return;
+  // Firestoreのheartbeatや古いsnapshotで配置待ち状態だけが消えた場合の保険。
+  // トス結果は _placingFace に保持し、空きマスクリック時に配置待ちを復元する。
+  if(!S.pending && S._placingFace){
+    S.pending={type:'placeCell', face:S._placingFace};
+  }
+  if(!S.pending) return;
   const me=S.current, opp=me^1, pd=S.pending, cell=S.board[idx];
   if(pd.type==='placeCell'){
     if(cell) return;
@@ -717,6 +726,7 @@ function clickCell(idx){
     if(S.coins[me]===0) S._justPlacedEighth=true;
     setLastMove(`${pname(me)}：${faceLabel(pd.face)}を配置`);
     S.pending=null;
+    S._placingFace=null;
     finishLocalAction({type:'place', cell:idx, face:pd.face, tossed: !pd.designated}, false, 'place');
   } else if(pd.type==='flip'){
     if(!cell||cell.type==='puppet'||cell.locked) return;
@@ -859,9 +869,27 @@ function countCard(player,card){ return S.hands[player].filter(c=>c===card).leng
    ここに置くことで、盤面更新→終了判定→確定済みgameState送信の順を保つ。
 */
 function finishLocalAction(action, actionEndsGame=false, reason='action'){
-  const ended = afterAction(!!actionEndsGame);
-  if(action && window.FB && FB.sendActionNow){
-    FB.sendActionNow({...action, endsGame: ended, finalPhase: S.phase}, reason);
+  let ended=false;
+  try{
+    ended = afterAction(!!actionEndsGame);
+  }catch(e){
+    console.error('ローカル行動の確定処理に失敗', reason, e);
+    S.busy=false;
+    render();
+    toastMsg('行動処理中にエラーが発生しました');
+    return false;
+  }
+  try{
+    const fb = window.FB;
+    if(action && fb && typeof fb.sendActionNow === 'function'){
+      // UI反映を先に完了させる。通信失敗でローカル配置が巻き戻らないよう非同期化する。
+      setTimeout(()=>fb.sendActionNow({...action, endsGame: ended, finalPhase: S.phase}, reason), 0);
+    }else if(action && fb && typeof fb.sendAction === 'function'){
+      setTimeout(()=>fb.sendAction({...action, endsGame: ended, finalPhase: S.phase}), 0);
+    }
+  }catch(e){
+    console.error('行動同期の起動に失敗', reason, e);
+    toastMsg('通信処理の起動に失敗しました');
   }
   return ended;
 }
@@ -1450,6 +1478,7 @@ function renderPending(){
 function cancelPending(){
   if(!S.pending) return;
   const designated = (S.pending.type==='placeCell' && S.pending.designated);
+  if(S.pending.type==='placeCell') S._placingFace=null;
   S.pending=null;
   if(designated){}
   sfx('click');
@@ -2235,6 +2264,14 @@ function _processRecvQueue(){
   };
   const run = ()=>{
     try {
+      // 自分が配置マスを選んでいる最中に相手の古いlastActionを処理すると、
+      // pendingが消えて「置けない」状態に見える。自分の手番中の相手アクションは原則 stale とみなす。
+      if(S.phase==='play' && S.pending && isHuman(S.current) && action && action.senderRole !== S.myRole && (!remoteState || remoteState.phase==='play')){
+        console.warn('自分の入力中のため古い相手アクションを保留/破棄', action);
+        _recvProcessing = false;
+        _processRecvQueue();
+        return;
+      }
       if(remoteState && ['result','final'].includes(remoteState.phase)){
         const sameOrNewerGame = (remoteState.gameIndex ?? 0) >= (S.gameIndex ?? 0);
         if(sameOrNewerGame && S.phase !== remoteState.phase){
@@ -2606,6 +2643,13 @@ function serializeState(){
   });
 }
 function restoreState(st){
+  const prevPending = S.pending;
+  const prevPhase = S.phase;
+  const prevCurrent = S.current;
+  const prevPlacingFace = S._placingFace;
+  S._preservePending = (prevPending && prevPending.type==='placeCell' && prevPhase==='play' && st && st.phase==='play' && prevCurrent===S.myRole)
+    ? {...prevPending, face: prevPending.face || prevPlacingFace}
+    : null;
   S.phase = st.phase;
   S.gameIndex = st.gameIndex ?? 0;
   S.totals = _pairArray(st.totals, [0,0]);
@@ -2623,8 +2667,23 @@ function restoreState(st){
   S.lastBreakdown = _restoreGameRecord(st.lastBreakdown);
   if(st.pnames) S.pnames = _pairArray(st.pnames, [null,null]);
   S._finalReason = st.finalReason || null;
-  S.pending = null;
+
+  // 自分の手番中に「コイントス後、置くマスを選んでいるだけ」の状態はFirestoreへ保存しない。
+  // heartbeat等で同じplay状態を復元した時に pending だけ消えると、コインを置けなく見えるため保護する。
+  const keepLocalPlacePending = S._preservePending &&
+    S._preservePending.type === 'placeCell' &&
+    st.phase === 'play' &&
+    S.phase === 'play' &&
+    S.current === S.myRole;
+  if(keepLocalPlacePending){
+    S.pending = S._preservePending;
+    S._placingFace = S._preservePending.face;
+  }else{
+    S.pending = null;
+    S._placingFace = null;
+  }
   S.busy = false;
+  S._preservePending = null;
 }
 
 /* ---- 親決め結果の確定保存 ---- */
