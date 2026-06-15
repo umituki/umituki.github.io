@@ -497,6 +497,32 @@ function beginSelect(){
   S.phase='select'; render();
 }
 
+// オンライン初回用：親決めを lastAction ではなく、ルーム作成時の gameState として確定させる。
+// これにより、受信側が parentToss イベントを取りこぼして選択画面へ進めなくなる問題を避ける。
+function makeInitialSelectState(parent, p0Name, p1Name){
+  const order=[];
+  let t=parent;
+  for(let k=0;k<SELECT_COUNT;k++){ order.push(t); t=t===0?1:0; }
+  return {
+    phase:'select',
+    gameIndex:0,
+    totals:[0,0],
+    gameLog:[],
+    parent,
+    current:null,
+    board:Array(16).fill(null),
+    coins:[8,8],
+    hands:[[],[]],
+    designate:[null,null],
+    cardLocks:[],
+    flipCooldown:[0,0],
+    sel:{ available: ALL_CARDS.slice(), order, step:0 },
+    over:false,
+    lastBreakdown:null,
+    pnames:[p0Name, p1Name]
+  };
+}
+
 /* ============================================================
    カード選択
    ============================================================ */
@@ -1847,7 +1873,13 @@ async function joinMatchQueue(){
   }
 
   if(matched){
-    await _createRoom(matched, user);
+    try {
+      await _createRoom(matched, user);
+    } catch(e) {
+      console.error('ルーム作成失敗', e);
+      toastMsg('ルーム作成に失敗しました。再度お試しください。');
+      newMatch(); render();
+    }
   } else {
     _queueUnsub = onSnapshot(queueRef, async(snap2)=>{
       if(!snap2.exists()){
@@ -1888,6 +1920,8 @@ async function _findMyRoom(user, retries=0){
 
 async function _createRoom(p0, p1){
   const roomId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  const initialParent = Math.random() < 0.5 ? 0 : 1;
+  const initialState = makeInitialSelectState(initialParent, p0.userName, p1.name);
 
   await setDoc(doc(db, 'rooms', roomId), {
     p0: {userId: p0.userId, userName: p0.userName},
@@ -1901,6 +1935,10 @@ async function _createRoom(p0, p1){
     disconnected: null,
     createdAt: serverTimestamp()
   });
+
+  // Firestore ルールが create 時のトップレベル項目を厳しく制限している可能性があるため、
+  // 既存実装で使っていた gameState は create 後の update で保存する。
+  await updateDoc(doc(db, 'rooms', roomId), { gameState: initialState });
 
   await setDoc(doc(db, 'matchQueue', 'pending_' + p0.userId), {roomId});
 
@@ -1947,13 +1985,18 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
     const d = snap.data();
     S.pnames[0] = d.p0.userName;
     S.pnames[1] = d.p1.userName;
-    if(isRejoin && d.gameState){
+    if(d.gameState){
       restoreState(d.gameState);
-      try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
-      toastMsg('試合に再接続しました');
+      if(isRejoin) {
+        try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
+        toastMsg('試合に再接続しました');
+      } else if(S.phase==='select' && S.gameIndex===0 && S.parent!==null && S.parent!==undefined) {
+        toastMsg(`${pname(S.parent)} が親になりました`);
+      }
       render();
       _resetTurnWatchdog();
     } else {
+      // 旧形式のルームに入った場合だけ、従来の親決め画面へフォールバックする。
       S.gameIndex=0; S.totals=[0,0]; S.gameLog=[]; S.lastMove=null;
       if(isRejoin) try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
       startGame();
@@ -2227,7 +2270,7 @@ function _receiveAction(action){
 
     case 'parentToss':
       // p1側のみここを通る（p0は sendAction().then() 内で処理済み）。
-      // gameState から先に復元済みの場合は applyParentTossResult 側で無視される。
+      // 永続フィールド parentToss で先に適用済みの場合は無視される。
       applyParentTossResult(action.parent);
       break;
 
