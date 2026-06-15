@@ -132,6 +132,7 @@
   .badge{font-size:10px;letter-spacing:.1em;padding:2px 7px;border-radius:20px;border:1px solid var(--line-strong);color:var(--muted)}
   .badge.oya{background:var(--ink);color:#fff;border-color:var(--ink)}
   .pmeta{font-size:11.5px;color:var(--muted)}
+  .result-countdown{font-size:14px;color:var(--p0);font-weight:700;margin:16px 0 8px;letter-spacing:.04em}
   .hand{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
   .card-chip{
     font-size:12px;padding:5px 9px;border-radius:8px;border:1px solid var(--line-strong);background:#FBFBF9;color:var(--ink);
@@ -700,7 +701,8 @@ function clickCell(idx){
     if(S.coins[me]===0) S._justPlacedEighth=true;
     setLastMove(`${pname(me)}：${faceLabel(pd.face)}を配置`);
     S.pending=null;
-    FB.sendAction({type:'place', cell:idx, face:pd.face});
+    // designated=true は指定によるトスなし設置。それ以外はトスあり
+    FB.sendAction({type:'place', cell:idx, face:pd.face, tossed: !pd.designated});
     afterAction();
   } else if(pd.type==='flip'){
     if(!cell||cell.type==='puppet'||cell.locked) return;
@@ -853,12 +855,11 @@ function countCard(player,card){ return S.hands[player].filter(c=>c===card).leng
 /* ============================================================
    コイントス演出
    ============================================================ */
-// result: null=自分がトス（乱数）, string=受信した結果でアニメのみ
+// result: null=自分がトス（乱数・ローカルのみ）, string=指定結果でアニメ再生
 function doToss(cb, fixedResult=null){
   S.busy=true; render();
   const result = fixedResult !== null ? fixedResult : toss();
-  // 自分がトスを決定した場合のみ送信（相手のトスは受信済みなので送らない）
-  if(fixedResult===null) FB.sendAction({type:'tossResult', face:result});
+  // トス結果は送信しない。設置確定時にplaceアクションへfaceを含めて1回だけ送る
   sfx('toss');
   const reduce=!animOn();
   let tickTimer=null;
@@ -1100,6 +1101,8 @@ function render(){
     case 'result': renderResult(); break;
     case 'final': renderFinal(); break;
   }
+  // オンライン：描画のたびに手番監視を再評価（ゲーム2以降の開始も拾う）
+  if(window._resetTurnWatchdog) window._resetTurnWatchdog();
 }
 
 function renderTitle(){
@@ -1139,7 +1142,11 @@ function renderTitle(){
     document.getElementById('rules').onclick=showRules;
     return;
   }
-  document.getElementById('online-btn').onclick=()=>{ ensureAudio(); sfx('click'); FB.joinMatchQueue(); };
+  document.getElementById('online-btn').onclick=()=>{
+    ensureAudio(); sfx('click');
+    if(!window.FB || !window.FB.ready){ toastMsg('オンライン機能を読み込み中です。少し待って再度お試しください。'); return; }
+    FB.joinMatchQueue();
+  };
   document.getElementById('record-btn').onclick=()=>{ ensureAudio(); sfx('click'); FB.showRecordModal(); };
   document.getElementById('rules').onclick=showRules;
   document.getElementById('settings').onclick=showSettings;
@@ -1201,7 +1208,7 @@ function renderParentToss(){
       const result = Math.random()<0.5 ? 0 : 1; // 0=p0が親, 1=p1が親
       FB.sendAction({type:'parentToss', parent: result});
       S.parent = result;
-      toastMsg(\`\${pname(S.parent)} が親になりました\`);
+      toastMsg(`${pname(S.parent)} が親になりました`);
       beginSelect();
     };
   }
@@ -1480,10 +1487,19 @@ function renderResult(){
         <div class="sb-row subtotal"><div>このゲーム</div><div class="num">${pname(0)} ${r.score[0]}</div><div class="num">${pname(1)} ${r.score[1]}</div></div>
         <div class="sb-row total"><div>累計</div><div class="num">${pname(0)} ${S.totals[0]}</div><div class="num">${pname(1)} ${S.totals[1]}</div></div>
       </div>
-      <button class="btn" id="next">${last?'最終結果を見る':'次のゲームへ'}</button>
+      <div class="result-countdown" id="result-cd">8秒後に次へ進みます…</div>
       <div class="pmeta">次の親：${last?'—':pname(computeNextParent())}</div>
     </div>`;
-  document.getElementById('next').onclick=()=>{ sfx('click'); nextGame(); };
+  // オンライン同期のため自動で次へ進む（両者で同じタイミング）
+  let cd = 8;
+  const cdEl = () => document.getElementById('result-cd');
+  if(cdEl()) cdEl().textContent = last ? `${cd}秒後に最終結果へ…` : `${cd}秒後に次のゲームへ…`;
+  clearInterval(S._resultTimer);
+  S._resultTimer = setInterval(()=>{
+    cd--;
+    if(cdEl()) cdEl().textContent = last ? `${cd}秒後に最終結果へ…` : `${cd}秒後に次のゲームへ…`;
+    if(cd<=0){ clearInterval(S._resultTimer); nextGame(); }
+  }, 1000);
 }
 // 終了盤面＋得点ラインのSVGを生成
 function resultBoardSVG(rec){
@@ -1574,8 +1590,12 @@ function renderFinal(){
     </div>`;
   sfx(winner===null?'draw':'win');
   if(winner!==null){ setTimeout(()=>fireFinalConfetti(winner), 150); }
-  // 戦績をFirestoreに書き込む（myRoleが確定している場合のみ）
-  FB.saveMatchResult(winner);
+  // 戦績保存とルーム削除は1マッチ1回のみ（再描画での重複防止）
+  if(!S._finalSaved){
+    S._finalSaved = true;
+    FB.saveMatchResult(winner);
+    FB.finishRoom();
+  }
   document.getElementById('title-btn').onclick=()=>{ sfx('click'); FB.leaveRoom(); newMatch(); render(); };
   document.getElementById('rules').onclick=showRules;
 }
@@ -1682,15 +1702,45 @@ function showRules(){
 }
 
 /* ============================================================
-   起動（FB初期化後に呼ばれる）
+   起動
    ============================================================ */
-function _boot(){ newMatch(); render(); }
+// FB初期化を待たず、まず即座にタイトルを描画する（モジュール読み込み失敗でも画面が出る）
+function _boot(){
+  try {
+    newMatch();
+    render();
+  } catch(e){
+    // 万一renderが失敗しても最低限の表示を出す
+    console.error('起動エラー', e);
+    document.getElementById('app').innerHTML =
+      '<div style="text-align:center;padding:60px 20px"><h1 style="font-family:serif">表裏陣取り</h1>'+
+      '<p style="color:#888;margin-top:16px">読み込みに問題が発生しました。<br>ページを再読み込みしてください。</p></div>';
+  }
+}
+// 即起動（FBがまだ無くてもrenderTitle内でFBの有無を判定している）
+_boot();
+window._boot = _boot;
+
+// Firebaseモジュールの読み込み失敗を検知（5秒後もFB未定義なら警告）
+setTimeout(()=>{
+  if(!window.FB || !window.FB.ready){
+    // オンライン機能が使えない旨をタイトルに表示
+    const actions = document.querySelector('.title-actions');
+    if(actions && !document.getElementById('fb-error-note')){
+      const note = document.createElement('p');
+      note.id='fb-error-note';
+      note.style.cssText='color:#B14A33;font-size:12px;margin-top:14px;line-height:1.6';
+      note.innerHTML='⚠️ オンライン機能の読み込みに失敗しました。<br>通信環境を確認して再読み込みしてください。';
+      actions.parentNode.appendChild(note);
+    }
+  }
+}, 5000);
 </script>
 
 <!-- ========== FIREBASE ========== -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.8.1/firebase-app.js';
-import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch }
+import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch, runTransaction }
   from 'https://www.gstatic.com/firebasejs/11.8.1/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -1755,6 +1805,7 @@ async function transferUser(name, id){
 let _roomUnsub = null;
 let _queueUnsub = null;
 let _queueTimeout = null;
+const QUEUE_STALE_MS = 120000; // 2分以上古いwaitingは無効
 
 async function joinMatchQueue(){
   const user = loadLocalUser();
@@ -1762,35 +1813,62 @@ async function joinMatchQueue(){
   S.phase = 'matchmaking'; render();
 
   const queueRef = doc(db, 'matchQueue', 'waiting');
-  const snap = await getDoc(queueRef);
 
-  if(snap.exists() && snap.data().userId !== user.docId){
-    // 相手が待機中 → マッチング成立
-    const opponent = snap.data();
-    await deleteDoc(queueRef); // キューを空に
-    await _createRoom(opponent, user); // opponentがp0、自分がp1
-  } else {
-    // 誰もいない or 自分が既に待機中 → 自分がキューに入る
-    await setDoc(queueRef, {
-      userId: user.docId,
-      userName: user.name,
-      joinedAt: serverTimestamp()
-    });
-    // 相手が入ってきたらマッチング
-    _queueUnsub = onSnapshot(queueRef, async(snap2)=>{
-      if(!snap2.exists()){
-        // 自分のエントリが消えた = 相手がマッチングしてルーム作成済み
-        if(_queueUnsub){ _queueUnsub(); _queueUnsub=null; }
-        clearTimeout(_queueTimeout);
-        // ルームを探す（自分がp1として招待されているはず）
-        // 少し待ってからルームを探す
-        setTimeout(()=>_findMyRoom(user), 500);
+  // トランザクションで「待機者を奪う or 自分が待機する」を原子的に実行
+  let matched = null; // マッチした相手（いれば）
+  try {
+    await runTransaction(db, async(tx)=>{
+      const snap = await tx.get(queueRef);
+      const now = Date.now();
+      let valid = false;
+      if(snap.exists()){
+        const d = snap.data();
+        // 自分自身ではなく、かつ古すぎない待機者
+        const joinedMs = d.joinedAtMs || 0;
+        valid = d.userId !== user.docId && (now - joinedMs) < QUEUE_STALE_MS;
+      }
+      if(valid){
+        // 待機者が有効 → 奪ってマッチング成立。waitingを消す
+        matched = snap.data();
+        tx.delete(queueRef);
+      } else {
+        // 誰もいない or 古い or 自分 → 自分が新規waitingになる
+        tx.set(queueRef, {
+          userId: user.docId,
+          userName: user.name,
+          joinedAtMs: now,
+          joinedAt: serverTimestamp()
+        });
+        matched = null;
       }
     });
-    // 60秒タイムアウト
-    _queueTimeout = setTimeout(()=>{
+  } catch(e){
+    console.error('マッチングtx失敗', e);
+    toastMsg('マッチングに失敗しました。再度お試しください。');
+    newMatch(); render(); return;
+  }
+
+  if(matched){
+    // 相手をp0、自分をp1としてルーム作成
+    await _createRoom(matched, user);
+  } else {
+    // 待機開始。相手が来てwaitingが消えたらマッチング
+    _queueUnsub = onSnapshot(queueRef, async(snap2)=>{
+      if(!snap2.exists()){
+        if(_queueUnsub){ _queueUnsub(); _queueUnsub=null; }
+        clearTimeout(_queueTimeout);
+        setTimeout(()=>_findMyRoom(user), 400);
+      }
+    });
+    _queueTimeout = setTimeout(async()=>{
       if(_queueUnsub){ _queueUnsub(); _queueUnsub=null; }
-      deleteDoc(queueRef);
+      // 自分のwaitingのみ削除（既に奪われていないか確認）
+      try {
+        await runTransaction(db, async(tx)=>{
+          const s = await tx.get(queueRef);
+          if(s.exists() && s.data().userId === user.docId) tx.delete(queueRef);
+        });
+      } catch(e){}
       toastMsg('タイムアウト：対戦相手が見つかりませんでした');
       newMatch(); render();
     }, 60000);
@@ -1858,54 +1936,118 @@ function _subscribeRoom(roomId, myRole){
     S.pnames[1] = d.p1.userName;
     S.gameIndex=0; S.totals=[0,0]; S.gameLog=[]; S.lastMove=null;
     startGame();
+    _resetTurnWatchdog(); // 監視開始
   });
 
-  // onDisconnect: 自分が切断したとき自動でdisconnectedフラグを書き込む
-  // （ブラウザのbeforeunloadでも書き込む）
   const roomRef = doc(db,'rooms',roomId);
-  window._onBeforeUnload = async()=>{
-    // 試合中のみ切断フラグを立てる
+
+  // 補助：タブを閉じる/リロード時に切断フラグを試みる（完了は保証されない）
+  window._onBeforeUnload = ()=>{
     if(S.roomId && S.phase && !['title','matchmaking','final'].includes(S.phase)){
-      try {
-        await updateDoc(roomRef, {disconnected: myRole, disconnectedAt: serverTimestamp()});
-      } catch(e){}
+      // sendBeacon相当の確実な送信はFirestore SDKでは不可。updateDocを試みるだけ
+      try { updateDoc(roomRef, {disconnected: myRole, disconnectedAt: serverTimestamp()}); } catch(e){}
     }
   };
   window.addEventListener('beforeunload', window._onBeforeUnload);
 
   _roomUnsub = onSnapshot(roomRef, snap=>{
-    if(!snap.exists()) return;
+    if(!snap.exists()){
+      // ルームが削除された（相手が破棄）
+      if(S.phase && !['title','matchmaking','final'].includes(S.phase)){
+        _handleDisconnect(myRole^1, roomId, 'ルームが終了されました');
+      }
+      return;
+    }
     const d = snap.data();
 
-    // 試合破棄済みなら無視
     if(d.status === 'abandoned') return;
 
-    // 切断検知（相手が切断した場合）
+    // 明示的な切断フラグ（beforeunloadが成功した場合）
     if(d.disconnected !== null && d.disconnected !== undefined && d.disconnected !== myRole){
       _handleDisconnect(d.disconnected, roomId);
       return;
     }
 
-    // 自分が送ったアクションは無視
     if(!d.lastAction || d.lastActionId === S.lastActionId) return;
     S.lastActionId = d.lastActionId;
-    _receiveAction(d.lastAction);
+    _dispatchReceived(d.lastAction);
+    _resetTurnWatchdog(); // アクション受信のたびに監視をリセット
   });
 }
 
+// 受信アクションを直列キューで順番に処理（順序保証＋busy待ち）
+let _recvQueue = [];
+let _recvProcessing = false;
+function _dispatchReceived(action){
+  _recvQueue.push(action);
+  _processRecvQueue();
+}
+function _processRecvQueue(){
+  if(_recvProcessing) return;
+  if(_recvQueue.length===0) return;
+  _recvProcessing = true;
+  const action = _recvQueue.shift();
+  const run = ()=>{
+    _receiveAction(action);
+    // _receiveAction内のアニメ（doToss等）でbusyになる場合があるので、解除を待ってから次へ
+    let waited=0;
+    const iv=setInterval(()=>{
+      waited+=80;
+      if(!S.busy || waited>=4000){
+        clearInterval(iv);
+        _recvProcessing = false;
+        _processRecvQueue(); // 次のアクションへ
+      }
+    }, 80);
+  };
+  // 既にbusyなら解除を待ってから実行
+  if(S.busy){
+    let w=0;
+    const iv0=setInterval(()=>{
+      w+=80;
+      if(!S.busy || w>=4000){ clearInterval(iv0); run(); }
+    }, 80);
+  } else {
+    run();
+  }
+}
+
+/* ---- 手番タイムアウト監視（切断検知の主軸） ---- */
+let _turnWatchdog = null;
+const TURN_TIMEOUT_MS = 120000; // 相手の手番が120秒応答なしで切断とみなす
+
+function _resetTurnWatchdog(){
+  clearTimeout(_turnWatchdog);
+  if(!S.roomId || S.myRole===null) return;
+  if(!S.phase || ['title','matchmaking','final','result'].includes(S.phase)) return;
+  // 相手の手番のときのみ監視（自分の手番で相手の応答は待たない）
+  const waitingForOpponent = (S.phase==='select')
+    ? (S.sel && S.sel.order[S.sel.step] !== S.myRole)
+    : (S.phase==='play' && S.current !== S.myRole);
+  if(!waitingForOpponent) return;
+  _turnWatchdog = setTimeout(()=>{
+    // 相手が応答しない → 切断とみなす
+    _handleDisconnect(S.myRole^1, S.roomId, '相手の応答がありません');
+  }, TURN_TIMEOUT_MS);
+}
+window._resetTurnWatchdog = _resetTurnWatchdog;
+
 let _disconnectModalShown = false;
-function _handleDisconnect(disconnectedRole, roomId){
+function _handleDisconnect(disconnectedRole, roomId, customMsg){
   if(_disconnectModalShown) return;
+  if(!S.roomId) return; // 既に退出済み
   _disconnectModalShown = true;
+  clearTimeout(_turnWatchdog);
 
   const oppName = S.pnames ? pname(disconnectedRole) : '相手';
+  const msg = customMsg || `${oppName} の接続が切れました`;
   const bg = document.createElement('div'); bg.className='modal-bg';
   bg.innerHTML=`<div class="modal">
-    <h3>⚠️ 接続が切れました</h3>
-    <p class="picker-note">${oppName} の接続が切れました。<br>再接続を待つか、試合を破棄してください。</p>
+    <h3>⚠️ 接続の問題</h3>
+    <p class="picker-note">${msg}。<br>再接続を待つか、試合を破棄してください。</p>
     <p class="picker-note" id="dc-timer" style="color:var(--p1);font-weight:700">60秒後に自動破棄されます</p>
     <div class="close-row">
-      <button class="btn ghost sm" id="dc-wait">再接続を待つ（60秒）</button>
+      <button class="btn ghost sm" id="dc-wait">再接続を待つ</button>
       <button class="btn" id="dc-abandon">試合を破棄する</button>
     </div>
   </div>`;
@@ -1916,20 +2058,16 @@ function _handleDisconnect(disconnectedRole, roomId){
   const countdown = setInterval(()=>{
     remaining--;
     if(timerEl()) timerEl().textContent = `${remaining}秒後に自動破棄されます`;
-    if(remaining <= 0){
-      clearInterval(countdown);
-      _abandonMatch(roomId, bg);
-    }
+    if(remaining <= 0){ clearInterval(countdown); _abandonMatch(roomId, bg); }
   }, 1000);
 
   document.getElementById('dc-wait').onclick=()=>{
-    // モーダルを閉じて待機（切断フラグをクリアして相手の再接続を待つ）
     clearInterval(countdown);
     bg.remove();
     _disconnectModalShown = false;
-    // disconnectedフラグをリセット
     try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
     toastMsg('再接続を待っています…');
+    _resetTurnWatchdog(); // 監視を再開
   };
 
   document.getElementById('dc-abandon').onclick=()=>{
@@ -1941,7 +2079,9 @@ function _handleDisconnect(disconnectedRole, roomId){
 async function _abandonMatch(roomId, bg){
   if(bg && bg.parentNode) bg.remove();
   _disconnectModalShown = false;
-  try { await updateDoc(doc(db,'rooms',roomId), {status:'abandoned', disconnected: null}); } catch(e){}
+  clearTimeout(_turnWatchdog);
+  // ルームを削除（無料枠の節約。冪等なので両者が消しても安全）
+  try { await deleteDoc(doc(db,'rooms',roomId)); } catch(e){}
   leaveRoom();
   newMatch(); render();
   toastMsg('試合を破棄しました');
@@ -1953,8 +2093,21 @@ function leaveRoom(){
     window.removeEventListener('beforeunload', window._onBeforeUnload);
     window._onBeforeUnload = null;
   }
+  clearTimeout(_turnWatchdog);
   _disconnectModalShown = false;
   S.roomId=null; S.myRole=null;
+}
+
+// 試合正常終了時：監視を止めてルームを削除（戦績は別途保存済み）
+async function finishRoom(){
+  clearTimeout(_turnWatchdog);
+  if(window._onBeforeUnload){
+    window.removeEventListener('beforeunload', window._onBeforeUnload);
+    window._onBeforeUnload = null;
+  }
+  const rid = S.roomId;
+  if(_roomUnsub){ _roomUnsub(); _roomUnsub=null; }
+  if(rid){ try { await deleteDoc(doc(db,'rooms',rid)); } catch(e){} }
 }
 
 /* ---- アクション送信 ---- */
@@ -1967,6 +2120,8 @@ async function sendAction(action){
       lastAction: action,
       lastActionId: actionId
     });
+    // 自分が手を打ち終えた → 相手の手番になるので監視開始
+    setTimeout(()=>_resetTurnWatchdog(), 100);
   } catch(e){
     toastMsg('通信エラーが発生しました');
     console.error(e);
@@ -1985,20 +2140,25 @@ function _receiveAction(action){
       beginSelect();
       break;
 
-    case 'tossResult':
-      // 相手の手番中のトス結果を受け取ってアニメ再生してからplaceCell待ちに
-      doToss(face=>{
-        S.pending={type:'placeCell', face};
-        render();
-      }, action.face);
-      break;
-
     case 'place':
-      placeCoin(opp, action.cell, action.face);
-      if(S.coins[opp]===0) S._justPlacedEighth=true;
-      setLastMove(`${pname(opp)}：${faceLabel(action.face)}を配置`);
-      S.pending=null;
-      afterAction();
+      // 相手の設置を再生。指定でないトスはアニメを見せてから設置
+      if(action.tossed){
+        // トスありの設置：トスアニメを再生してから設置
+        doToss(face=>{
+          placeCoin(opp, action.cell, action.face);
+          if(S.coins[opp]===0) S._justPlacedEighth=true;
+          setLastMove(`${pname(opp)}：${faceLabel(action.face)}を配置`);
+          S.pending=null;
+          afterAction();
+        }, action.face);
+      } else {
+        // 指定（トスなし）の設置：そのまま置く
+        placeCoin(opp, action.cell, action.face);
+        if(S.coins[opp]===0) S._justPlacedEighth=true;
+        setLastMove(`${pname(opp)}：${faceLabel(action.face)}を配置`);
+        S.pending=null;
+        afterAction();
+      }
       break;
 
     case 'flip':
@@ -2019,6 +2179,7 @@ function _receiveAction(action){
       break;
 
     case 'surrender':
+      clearTimeout(_turnWatchdog); // 監視停止
       toastMsg(`${pname(opp)} が投降しました`);
       setTimeout(()=>{
         // 残りゲームを全部自分の勝ちで埋めてfinalへ
@@ -2104,7 +2265,14 @@ async function surrender(){
     await updateDoc(uref, {losses:(d.losses||0)+1, streak:0, history});
     saveLocalUser({...user, losses:(user.losses||0)+1, streak:0, history});
   }
-  leaveRoom(); newMatch(); render();
+  // 相手がsurrenderアクションを受信できるよう少し待ってからルーム削除
+  const rid = S.roomId;
+  clearTimeout(_turnWatchdog);
+  if(window._onBeforeUnload){ window.removeEventListener('beforeunload', window._onBeforeUnload); window._onBeforeUnload=null; }
+  if(_roomUnsub){ _roomUnsub(); _roomUnsub=null; }
+  setTimeout(async()=>{ if(rid){ try{ await deleteDoc(doc(db,'rooms',rid)); }catch(e){} } }, 2000);
+  S.roomId=null; S.myRole=null;
+  newMatch(); render();
 }
 
 /* ---- 戦績保存 ---- */
@@ -2237,16 +2405,38 @@ window.FB = {
   joinMatchQueue,
   leaveQueue,
   leaveRoom,
+  finishRoom,
   sendAction,
   saveMatchResult,
   surrender,
   showRegisterModal,
   showTransferModal,
   showRecordModal,
+  ready: true,
 };
 
-// FBの準備完了後にゲームを起動
-window._boot();
+// 前回セッションで残った自分のwaitingエントリを掃除（不自然な離脱対策）
+async function _cleanupStaleEntries(){
+  const user = loadLocalUser();
+  if(!user) return;
+  try {
+    // 自分が残したwaitingがあれば削除
+    const qref = doc(db,'matchQueue','waiting');
+    const qsnap = await getDoc(qref);
+    if(qsnap.exists() && qsnap.data().userId === user.docId){
+      await deleteDoc(qref);
+    }
+    // 自分宛のpending通知が残っていれば削除
+    const pref = doc(db,'matchQueue','pending_'+user.docId);
+    const psnap = await getDoc(pref);
+    if(psnap.exists()) await deleteDoc(pref);
+  } catch(e){ console.warn('クリーンアップ失敗（無視）', e); }
+}
+
+// FB準備完了：タイトルを再描画してオンライン機能を有効化し、ゴミを掃除
+if(window._boot) window._boot();        // 念のため再起動（タイトル再描画）
+else { newMatch(); render(); }
+_cleanupStaleEntries();
 </script>
 </body>
 </html>
