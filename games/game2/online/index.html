@@ -344,7 +344,7 @@ const pname=p=> escapeHTML((S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あ
 const isHuman=p=> S && S.myRole!==null ? p===S.myRole : p===MY;  // 自分のroleと一致するプレイヤーのみ操作可
 // 設定は match を跨いで保持（newMatchでリセットしない）
 let SETTINGS={ sound:true, anim:true, shake:true };
-const APP_VERSION='Ver.1.0.18';
+const APP_VERSION='Ver.1.0.19';
 
 const CARD_INFO={
   shitei:{name:'指定', desc:'次の相手と自分のコイントス結果を、選択した向きに固定する。', prio:6},
@@ -1237,7 +1237,19 @@ async function doParentToss(){
   if(S.phase!=='toss') return; // 既に進行済みなら実行しない
   S._tossFired = true;
   if(S._tossTimer){ clearTimeout(S._tossTimer); S._tossTimer=null; }
-  const result = Math.random()<0.5 ? 0 : 1; // 0=p0が親, 1=p1が親
+
+  // 初回の親決めにも通常のコイントス演出を使う。
+  // 表ならp0、裏ならp1を親にする。演出終了後にだけFirestoreへ確定状態を保存する。
+  let tossFace;
+  try {
+    tossFace = await new Promise(resolve=>doToss(resolve));
+  } catch(e){
+    console.error('親決めコイントス演出に失敗', e);
+    tossFace = toss();
+    S.busy = false;
+  }
+  if(S.phase!=='toss') return; // 演出中に相手側同期などで進んでいた場合は二重確定しない
+  const result = tossFace===FRONT ? 0 : 1; // 表=p0が親, 裏=p1が親
 
   // parentToss は lastAction に入れない。
   // lastAction は1枠しかなく、直後の pick で上書きされるため、
@@ -1248,7 +1260,7 @@ async function doParentToss(){
     } else {
       enterSelect(result, true);
     }
-    toastMsg(`${pname(S.parent)} が親になりました`);
+    toastMsg(`${faceLabel(tossFace)}：${pname(S.parent)} が親になりました`);
   } catch(e){
     console.error('親決め結果の保存に失敗', e);
     S._tossFired = false;
