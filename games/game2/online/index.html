@@ -73,7 +73,6 @@
   h1.title{font-family:var(--serif);font-weight:700;font-size:40px;letter-spacing:.06em;margin-bottom:10px}
   .subtitle{color:var(--muted);font-size:14px;margin-bottom:32px}
   .title-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
-  .home-version{position:fixed;top:14px;left:16px;font-size:12px;color:var(--muted);letter-spacing:.08em;z-index:10;background:rgba(244,244,241,.72);padding:4px 8px;border-radius:999px}
 
   /* ---------- ヘッダ（対局中スコア） ---------- */
   .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
@@ -214,6 +213,7 @@
   .toss-label{font-size:14px;color:var(--muted)}
 
   .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 20px;border-radius:30px;font-size:13px;z-index:60;box-shadow:var(--shadow);animation:rise .3s ease}
+  .app-version{position:fixed;top:12px;left:14px;z-index:20;font-size:11px;letter-spacing:.08em;color:var(--muted);background:rgba(255,255,255,.72);border:1px solid var(--line);border-radius:999px;padding:4px 9px;backdrop-filter:blur(4px)}
   @keyframes rise{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 
   @media (prefers-reduced-motion: reduce){
@@ -331,8 +331,8 @@
 /* ============================================================
    表裏陣取り — ロジック
    ============================================================ */
+const APP_VERSION='Ver.1.0.4';
 const MY=0, OPP=1; // オンライン: MY=自分, OPP=相手
-const APP_VERSION='Ver.1.0.3';
 const FRONT='f', BACK='b';
 const faceLabel=f=>f===FRONT?'表':'裏';
 const pname=p=> (S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あなた':'相手');
@@ -499,40 +499,6 @@ function beginSelect(){
   S.phase='select'; render();
 }
 
-// オンライン初回用：親決めを lastAction ではなく、ルーム作成時の gameState として確定させる。
-// これにより、受信側が parentToss イベントを取りこぼして選択画面へ進めなくなる問題を避ける。
-function makeInitialSelectState(parent, p0Name, p1Name){
-  const order=[];
-  let t=parent;
-  for(let k=0;k<SELECT_COUNT;k++){ order.push(t); t=t===0?1:0; }
-  return {
-    phase:'select',
-    gameIndex:0,
-    totals:[0,0],
-    gameLog:[],
-    parent,
-    current:null,
-    board:Array(16).fill(null),
-    coins:[8,8],
-    hands:[[],[]],
-    designate:[null,null],
-    cardLocks:[],
-    flipCooldown:[0,0],
-    sel:{ available: ALL_CARDS.slice(), order, step:0 },
-    over:false,
-    lastBreakdown:null,
-    pnames:[p0Name, p1Name]
-  };
-}
-
-function deterministicParentFromRoomId(roomId){
-  // gameState が欠けた旧ルームでも両端末が同じ親を復元できるよう、roomId から決定する。
-  const src = String(roomId || '');
-  let h = 0;
-  for(let i=0;i<src.length;i++) h = ((h * 31) + src.charCodeAt(i)) | 0;
-  return Math.abs(h) % 2;
-}
-
 /* ============================================================
    カード選択
    ============================================================ */
@@ -543,32 +509,29 @@ function pickCard(cardId){
   if(!S.sel.available.has(cardId)) return;
   commitPick(cardId);
 }
-function commitPick(cardId){
-  if(!S.sel || S.phase!=='select'){
-    // select フェーズ未準備で呼ばれた場合は安全に無視。
-    return;
-  }
+function commitPick(cardId, fromRemote=false){
+  if(!S.sel || S.phase!=='select') return;
+  if(S.sel.step>=SELECT_COUNT) return;
+
   const who=S.sel.order[S.sel.step];
-  const isLocalPick = who===S.myRole;
   if(!S.sel.available.has(cardId)) return;
 
   S.sel.available.delete(cardId);
   S.hands[who].push(cardId);
+  S.sel.step++;
   sfx('pick');
 
-  // 重要：通信に載せる gameState は「カード選択後」の状態でなければならない。
-  // 旧実装は step を進める前に送信していたため、受信側が state 復元で追随できなかった。
-  S.sel.step++;
   if(S.sel.step>=SELECT_COUNT){
     S.current = S.parent;
     S.phase='play';
   }
+
   render();
 
-  if(isLocalPick){
-    // Firestore ルールが lastAction.pick の追加フィールドを拒否する可能性があるため、
-    // pick は専用送信にする。失敗時は gameState だけで再送する。
-    FB.sendPick(cardId);
+  // カード選択は lastAction ではなく、選択後の gameState を正本として同期する。
+  // lastAction は補助通知に留め、受信側は gameState の step/hands を見て復元する。
+  if(!fromRemote && who===S.myRole && window.FB && FB.sendSelectState){
+    FB.sendSelectState(cardId);
   }
 }
 
@@ -1113,7 +1076,7 @@ function render(){
 function renderTitle(){
   const user = (window.FB && window.FB.getUser) ? window.FB.getUser() : null;
   app.innerHTML=`
-    <div class="home-version">${APP_VERSION}</div>
+    <div class="app-version">${APP_VERSION}</div>
     <div class="title-wrap">
       <div class="title-mark">
         <div class="title-coin front">表</div>
@@ -1190,44 +1153,28 @@ function askQuit(){
 }
 
 function renderParentToss(){
-  // オンライン初回でここに来るのは、初期 gameState を読めなかった時の旧フォールバック経路。
-  // ここで自動コイントスを再開すると同じ停止が再発するため、roomId から親を復元して
-  // そのままカード選択画面へ修復する。
-  if(S.roomId && S.gameIndex===0){
-    app.innerHTML=`
-      <div class="title-wrap">
-        <div class="eyebrow">同期中</div>
-        <h1 class="title" style="font-size:28px">対戦を準備しています…</h1>
-        <div class="thinking" style="margin:24px auto"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
-        <p class="subtitle">親決め情報を復元しています。</p>
-      </div>`;
-    if(S._repairingInitialSelect) return;
-    S._repairingInitialSelect = true;
-    const parent = deterministicParentFromRoomId(S.roomId);
-    const st = makeInitialSelectState(parent, S.pnames?.[0] || 'プレイヤー1', S.pnames?.[1] || 'プレイヤー2');
-    restoreState(st);
-    if(window.FB && typeof FB.repairGameState === 'function') FB.repairGameState(st);
-    setTimeout(()=>{
-      S._repairingInitialSelect = false;
-      toastMsg(`${pname(S.parent)} が親になりました`);
-      render();
-    }, 0);
-    return;
-  }
-
-  // 非オンライン・旧データ用の表示。自動通信は行わない。
+  const isP0 = S.myRole === 0;
   app.innerHTML=`
     <div class="title-wrap">
       <div class="eyebrow">ゲーム 1 / 3</div>
-      <h1 class="title" style="font-size:28px">親決め情報を待っています</h1>
-      <p class="subtitle">対戦情報の同期中です。進まない場合はホームへ戻って再マッチしてください。</p>
+      <h1 class="title" style="font-size:28px">親を決めます</h1>
+      <p class="subtitle">コイントスで親（カード選択が先・先攻）を決定します。<br>親が先攻です。</p>
       <div class="thinking"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
+      <p class="subtitle" style="margin-top:8px">${isP0 ? 'まもなく自動でコイントスします…' : '相手がコイントスをしています…'}</p>
     </div>`;
+  // p0 側のみ、未トスなら1秒後に自動でトスを実行する。
+  // 1秒待つのは、両者の _subscribeRoom 初期化（盤面準備）が整ってから
+  // parentToss を送るため。これにより p1 側でトス結果の取りこぼし／
+  // フェーズ巻き戻しが起きにくくなる。
+  // 多重発火防止：既にトス済み or タイマー設定済みなら何もしない。
+  if(isP0 && !S._tossFired && !S._tossTimer){
+    S._tossTimer = setTimeout(doParentToss, 1000);
+  }
 }
 
 function applyParentTossResult(parent, sourceKey=null){
-  // 親決め結果の重複適用を防ぐ。
-  // ここでは新しいFirestoreフィールドを使わず、lastAction または gameState から復元する。
+  // parentToss は lastAction が後続の pick で上書きされても復元できるよう、
+  // room.parentToss にも永続化している。こちらの関数で二重適用を防ぐ。
   if(sourceKey && S._parentTossKey === sourceKey) return false;
   if(sourceKey) S._parentTossKey = sourceKey;
 
@@ -1242,59 +1189,27 @@ function applyParentTossResult(parent, sourceKey=null){
   beginSelect();
   return true;
 }
-
-function stateAfterParentToss(parent){
-  // Firestoreのルールで新しいトップレベルフィールドが拒否される環境でも動くよう、
-  // 親決め後の状態は既存の gameState にだけ入れる。
-  const order=[];
-  let t=parent;
-  for(let k=0;k<SELECT_COUNT;k++){ order.push(t); t=t===0?1:0; }
-  const st = serializeState();
-  st.phase = 'select';
-  st.parent = parent;
-  st.current = null;
-  st.sel = { available: ALL_CARDS.slice(), order, step:0 };
-  st.over = false;
-  return st;
-}
 // 親決めコイントスの実行（p0のみ呼ぶ）。多重実行を防止する。
 function doParentToss(){
   if(S._tossFired) return;
   S._tossFired = true;
   if(S._tossTimer){ clearTimeout(S._tossTimer); S._tossTimer=null; }
   const result = Math.random()<0.5 ? 0 : 1; // 0=p0が親, 1=p1が親
-
-  // 親決め結果は lastAction に加え、既存の gameState に「カード選択開始後の状態」として保存する。
-  // これにより lastAction が直後の pick で上書きされても、受信側は gameState から復元できる。
-  const nextState = stateAfterParentToss(result);
-
-  FB.sendAction({type:'parentToss', parent: result}, nextState).then(ok=>{
+  // sendAction は async (内部で await updateDoc)。
+  // 書き込み完了を待ってから beginSelect() することで、
+  // p1 が onSnapshot でアクションを受信するタイミングと揃い、
+  // sel.step の起点がずれることによる手番同期不具合を防ぐ。
+  FB.sendAction({type:'parentToss', parent: result}).then(ok=>{
+    // 書き込みに失敗した場合、p0だけが先へ進むと同期不能になるため進めない。
     if(!ok){
-      // 通信失敗時は自動再試行でエラーを連発させず、画面上の再試行ボタンに任せる。
       S._tossFired = false;
-      if(S._tossTimer){ clearTimeout(S._tossTimer); S._tossTimer=null; }
-      renderParentTossRetry();
+      render();
       return;
     }
     // onSnapshot は lastActionId の照合で自分送信分をスキップするため、
     // p0 のローカル状態はここで明示的に適用する。
     applyParentTossResult(result, `local:${S.gameIndex}:${result}`);
   });
-}
-
-function renderParentTossRetry(){
-  if(S.phase!=='toss') return;
-  app.innerHTML=`
-    <div class="title-wrap">
-      <div class="eyebrow">ゲーム 1 / 3</div>
-      <h1 class="title" style="font-size:28px">通信エラー</h1>
-      <p class="subtitle">親決めコイントスの結果を送信できませんでした。<br>連続エラーを防ぐため、自動再試行を停止しています。</p>
-      <div class="title-actions" style="margin-top:24px">
-        <button class="btn" id="retry-parent-toss">もう一度コイントスする</button>
-      </div>
-    </div>`;
-  const btn=document.getElementById('retry-parent-toss');
-  if(btn) btn.onclick=()=>{ ensureAudio(); sfx('click'); render(); };
 }
 
 function renderSelect(){
@@ -1941,9 +1856,6 @@ async function _findMyRoom(user, retries=0){
 async function _createRoom(p0, p1){
   const roomId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 
-  // ルーム作成時は、元のFireStoreルールで許可されていた最小構造だけを書き込む。
-  // gameState を create 時に含めると、既存ルールが「想定外のフィールド」として拒否し、
-  // 待機側に pending が作られず「マッチング処理に失敗しました」になる可能性がある。
   await setDoc(doc(db, 'rooms', roomId), {
     p0: {userId: p0.userId, userName: p0.userName},
     p1: {userId: p1.docId, userName: p1.name},
@@ -1980,11 +1892,41 @@ function _loadActiveRoom(){
   try { return JSON.parse(localStorage.getItem(LS_ACTIVE_ROOM)); } catch(e){ return null; }
 }
 
+function selectStateSignature(st){
+  if(!st || !st.sel) return '';
+  const hands = Array.isArray(st.hands) ? st.hands.map(h=>Array.isArray(h)?h.join(','):'').join('|') : '';
+  const avail = st.sel && Array.isArray(st.sel.available) ? st.sel.available.join(',') : '';
+  return [st.phase, st.gameIndex, st.parent, st.current, st.sel.step, avail, hands].join('#');
+}
+function remoteStateIsAhead(st){
+  if(!st || !st.sel || typeof st.sel.step!=='number') return false;
+  if(st.gameIndex !== S.gameIndex) return false;
+
+  // 自分がまだ旧 toss に残っている場合は、select/play の共有状態を優先する。
+  if(S.phase==='toss' && st.phase!=='toss') return true;
+
+  if(S.phase==='select'){
+    if(st.phase==='play') return true;
+    if(st.phase==='select' && S.sel){
+      if(st.sel.step > S.sel.step) return true;
+      if(st.sel.step === S.sel.step && selectStateSignature(st) !== selectStateSignature(serializeState())) return true;
+    }
+  }
+  return false;
+}
+function restoreRemoteGameStateIfAhead(st, lastActionId=null){
+  if(!remoteStateIsAhead(st)) return false;
+  restoreState(st);
+  if(lastActionId) S.lastActionId = lastActionId;
+  render();
+  _resetTurnWatchdog();
+  return true;
+}
+
 async function _subscribeRoom(roomId, myRole, isRejoin=false){
   S.roomId = roomId;
   S.myRole = myRole;
   _saveActiveRoom(roomId, myRole);
-  const roomRef = doc(db,'rooms',roomId);
 
   // ★順序保証：onSnapshot を登録する前に、await で初回状態の初期化を完了させる。
   // 旧実装は getDoc().then() と onSnapshot を並行させていたため、
@@ -1993,7 +1935,7 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
   //  toss に巻き戻す」レースが発生し、p1 が選択画面に移行しないことがあった。
   // await で初期化を先に終わらせることで、このレースを原理的に排除する。
   try {
-    const snap = await getDoc(roomRef);
+    const snap = await getDoc(doc(db,'rooms',roomId));
     if(!snap.exists()){
       _clearActiveRoom();
       toastMsg('対象の試合は既に終了しています');
@@ -2003,29 +1945,16 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
     const d = snap.data();
     S.pnames[0] = d.p0.userName;
     S.pnames[1] = d.p1.userName;
-    if(d.gameState){
+    if(isRejoin && d.gameState){
       restoreState(d.gameState);
-      if(isRejoin) {
-        try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
-        toastMsg('試合に再接続しました');
-      } else if(S.phase==='select' && S.gameIndex===0 && S.parent!==null && S.parent!==undefined) {
-        toastMsg(`${pname(S.parent)} が親になりました`);
-      }
+      try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
+      toastMsg('試合に再接続しました');
       render();
       _resetTurnWatchdog();
     } else {
-      // 旧形式・初期状態欠落ルームでも toss 画面へ戻さない。
-      // roomId から両端末で同じ親を復元し、既存の gameState へ修復保存する。
-      const repaired = makeInitialSelectState(
-        deterministicParentFromRoomId(roomId),
-        d.p0?.userName || 'プレイヤー1',
-        d.p1?.userName || 'プレイヤー2'
-      );
-      try { await updateDoc(roomRef, {gameState: repaired}); } catch(e){ console.warn('初期状態の修復保存に失敗（ローカル復元は継続）', e); }
-      if(isRejoin) try { updateDoc(roomRef, {disconnected: null}); } catch(e){}
-      restoreState(repaired);
-      toastMsg(`${pname(S.parent)} が親になりました`);
-      render();
+      S.gameIndex=0; S.totals=[0,0]; S.gameLog=[]; S.lastMove=null;
+      if(isRejoin) try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
+      startGame();
       _resetTurnWatchdog();
     }
   } catch(e){
@@ -2036,6 +1965,7 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
     return;
   }
 
+  const roomRef = doc(db,'rooms',roomId);
 
   window._onBeforeUnload = ()=>{
     if(S.roomId && S.phase && !['title','matchmaking','final'].includes(S.phase)){
@@ -2061,14 +1991,16 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
       return;
     }
 
-    // gameState は共有状態の正本として扱う。
-    // 特にカード選択は lastAction の取りこぼし・ルール拒否に備え、state 復元だけでも進める。
-    if(d.gameState && shouldRestoreSelectState(d.gameState)){
-      restoreState(d.gameState);
-      if(d.lastActionId) S.lastActionId = d.lastActionId; // 同じ pick を後から二重処理しない
-      render();
-      _resetTurnWatchdog();
-      return;
+    // gameState を共有状態の正本として扱う。
+    // 特にカード選択は lastAction だけに頼ると取りこぼし・ルール拒否・順序ずれで止まるため、
+    // step/hands が進んでいれば gameState から直接復元する。
+    if(d.gameState && restoreRemoteGameStateIfAhead(d.gameState, d.lastActionId || null)) return;
+
+    // 親決め結果は lastAction だけだと、直後の pick で上書きされる可能性がある。
+    // そのため room.parentToss を永続フィールドとして見て、受信側が toss で止まらないようにする。
+    if(d.parentToss && d.parentToss.gameIndex === S.gameIndex && S.phase === 'toss' && S.parent === null){
+      const pt = d.parentToss;
+      applyParentTossResult(pt.parent, pt.actionId || `${pt.gameIndex}:${pt.parent}`);
     }
 
     if(!d.lastAction || d.lastActionId === S.lastActionId) return;
@@ -2267,54 +2199,18 @@ function restoreState(st){
   S.busy = false;
 }
 
-function selectProgress(st){
-  if(!st || !st.sel || !Array.isArray(st.sel.order)) return -1;
-  return typeof st.sel.step === 'number' ? st.sel.step : -1;
-}
-function shouldRestoreSelectState(gs){
-  if(!gs || gs.gameIndex !== S.gameIndex) return false;
-
-  // カード選択中：相手の選択で step が進んだ state を正として復元する。
-  if(S.phase==='select' && gs.phase==='select' && S.sel && gs.sel){
-    return selectProgress(gs) > selectProgress({sel:S.sel});
-  }
-
-  // 最後のカード選択後：相手側が play に進んだらこちらも追従する。
-  if(S.phase==='select' && gs.phase==='play'){
-    return true;
-  }
-
-  // ローカルがまだ初期化途中の場合の保険。
-  if((S.phase==='toss' || !S.sel) && gs.phase==='select'){
-    return true;
-  }
-
-  return false;
-}
-
 /* ---- アクション送信 ---- */
-async function repairGameState(state){
-  if(!S.roomId) return false;
-  try {
-    await updateDoc(doc(db,'rooms', S.roomId), {gameState: state});
-    return true;
-  } catch(e){
-    console.warn('gameState 修復保存に失敗（ローカル進行は継続）', e);
-    return false;
-  }
-}
 
-async function sendPick(cardId){
+async function sendSelectState(cardId){
   if(!S.roomId) return false;
-  const action = {type:'pick', card:cardId};
-  const actionId = crypto.randomUUID();
   const state = serializeState();
+  const actionId = crypto.randomUUID();
 
-  // 第1候補：通常どおり lastAction + gameState。
-  // ただし pick に余計なフィールドは付けない。Firestore ルールに弾かれやすくなるため。
+  // 第1候補：既存の lastAction と gameState を同時に更新する。
+  // 受信側は gameState を優先して復元するため、lastAction の取りこぼしに依存しない。
   try {
     await updateDoc(doc(db,'rooms', S.roomId), {
-      lastAction: action,
+      lastAction: {type:'pick', card:cardId},
       lastActionId: actionId,
       gameState: state
     });
@@ -2322,11 +2218,11 @@ async function sendPick(cardId){
     setTimeout(()=>_resetTurnWatchdog(), 100);
     return true;
   } catch(e1){
-    console.warn('pick action送信に失敗。gameStateのみで再送します', e1);
+    console.warn('pick通知の送信に失敗。gameStateのみで再送します', e1);
   }
 
-  // 第2候補：lastAction を使わず gameState だけを保存。
-  // 受信側は onSnapshot の gameState 復元でカード選択を進める。
+  // 第2候補：lastAction を使わず gameState だけを更新する。
+  // 受信側は onSnapshot の gameState 復元だけでカード選択を進められる。
   try {
     await updateDoc(doc(db,'rooms', S.roomId), {gameState: state});
     setTimeout(()=>_resetTurnWatchdog(), 100);
@@ -2348,6 +2244,19 @@ async function sendAction(action, stateOverride=null){
       lastActionId: actionId,
       gameState: stateOverride || serializeState()
     };
+
+    // 親決め結果だけは「一時的な最新アクション」ではなく、
+    // room に残る永続フィールドとしても保存する。
+    // これにより、p0 が親になってすぐカードを選び lastAction が pick に上書きされても、
+    // p1 は parentToss を読んで select フェーズへ進める。
+    if(action.type === 'parentToss'){
+      payload.parentToss = {
+        gameIndex: S.gameIndex,
+        parent: action.parent,
+        actionId,
+        createdAtMs: Date.now()
+      };
+    }
 
     await updateDoc(doc(db,'rooms', S.roomId), payload);
     setTimeout(()=>_resetTurnWatchdog(), 100);
@@ -2414,7 +2323,7 @@ function _receiveAction(action){
           else break;
         }
       }
-      commitPick(action.card);
+      commitPick(action.card, true);
       break;
 
     case 'surrender':
@@ -2644,8 +2553,7 @@ window.FB = {
   leaveRoom,
   finishRoom,
   sendAction,
-  sendPick,
-  repairGameState,
+  sendSelectState,
   saveMatchResult,
   surrender,
   showRegisterModal,
