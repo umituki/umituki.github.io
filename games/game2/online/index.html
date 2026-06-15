@@ -1,0 +1,2148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>表裏陣取り</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F4F4F1;
+    --surface:#FFFFFF;
+    --ink:#1C1C1A;
+    --muted:#8C8B83;
+    --faint:#B6B5AD;
+    --line:#E6E5DF;
+    --line-strong:#D7D6CE;
+    --p0:#2E4B8F;      /* あなた = 藍 */
+    --p0-soft:#E7ECF6;
+    --p0-glow:rgba(46,75,143,.32);
+    --p0-faint:rgba(46,75,143,.14);
+    --p1:#B14A33;      /* 相手 = 朱 */
+    --p1-soft:#F7E9E4;
+    --p1-glow:rgba(177,74,51,.32);
+    --p1-faint:rgba(177,74,51,.14);
+    --accent:#1C1C1A;
+    --ok:#2E7D5B;
+    --shadow:0 1px 2px rgba(28,28,26,.05),0 8px 24px rgba(28,28,26,.06);
+    --r:14px;
+    --serif:"Noto Serif JP","Hiragino Mincho ProN",serif;
+    --sans:"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic Medium",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.6;
+    display:flex;justify-content:center;
+  }
+  #app{width:100%;max-width:880px;min-height:100vh;padding:24px 18px 60px;display:flex;flex-direction:column}
+
+  /* ---------- 共通 ---------- */
+  .eyebrow{font-size:11px;letter-spacing:.28em;color:var(--muted);text-transform:none;font-weight:500}
+  .btn{
+    font-family:var(--sans);font-size:14px;font-weight:500;color:#fff;background:var(--accent);
+    border:none;border-radius:10px;padding:12px 22px;cursor:pointer;transition:transform .12s ease,opacity .12s ease,background .12s;
+  }
+  .btn:hover{transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn:focus-visible{outline:2px solid var(--p0);outline-offset:2px}
+  .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line-strong)}
+  .btn.ghost:hover{background:#fff}
+  .btn:disabled{opacity:.32;cursor:not-allowed;transform:none}
+  .btn.sm{padding:9px 16px;font-size:13px}
+  .mode-seg{display:inline-flex;background:#fff;border:1px solid var(--line-strong);border-radius:12px;padding:4px;gap:4px;margin:10px 0 24px}
+  .seg{font-family:var(--sans);font-size:13px;font-weight:500;color:var(--muted);background:transparent;border:none;border-radius:9px;padding:9px 18px;cursor:pointer;transition:background .14s,color .14s}
+  .seg.active{background:var(--ink);color:#fff}
+  .seg:focus-visible{outline:2px solid var(--p0);outline-offset:2px}
+
+  /* ---------- タイトル ---------- */
+  .title-wrap{margin:auto 0;text-align:center;padding:30px 0}
+  .title-mark{
+    width:104px;height:104px;margin:0 auto 26px;position:relative;
+  }
+  .title-coin{
+    position:absolute;width:74px;height:74px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:30px;
+    box-shadow:var(--shadow);
+  }
+  .title-coin.front{background:var(--p0);color:#fff;left:0;top:0;z-index:2}
+  .title-coin.back{background:#fff;color:var(--p1);border:2px solid var(--p1);right:0;bottom:0}
+  h1.title{font-family:var(--serif);font-weight:700;font-size:40px;letter-spacing:.06em;margin-bottom:10px}
+  .subtitle{color:var(--muted);font-size:14px;margin-bottom:32px}
+  .title-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+
+  /* ---------- ヘッダ（対局中スコア） ---------- */
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+  .game-counter{font-size:12px;color:var(--muted);letter-spacing:.18em}
+  .totals{display:flex;align-items:center;gap:14px;font-family:var(--serif);font-size:15px}
+  .tot{display:flex;align-items:center;gap:6px}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .dot.p0{background:var(--p0)} .dot.p1{background:var(--p1)}
+  .link{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;font-family:var(--sans)}
+  .link:hover{color:var(--ink)}
+
+  /* ---------- 盤面 ---------- */
+  .board-stage{display:flex;flex-direction:column;align-items:center;gap:16px}
+  .board{
+    display:grid;grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr));gap:10px;
+    background:var(--surface);padding:14px;border-radius:18px;border:1px solid var(--line);
+    box-shadow:var(--shadow);width:min(100%,420px);aspect-ratio:1;
+  }
+  .cell{
+    background:#FBFBF9;border:1px solid var(--line);border-radius:12px;
+    display:flex;align-items:center;justify-content:center;position:relative;cursor:default;
+    min-width:0;min-height:0;aspect-ratio:1;transition:background .12s,border-color .12s;
+  }
+  .cell.selectable-p0{cursor:pointer;border-color:var(--p0);background:var(--p0-soft);box-shadow:inset 0 0 0 1px var(--p0)}
+  .cell.selectable-p0:hover{background:#dde6f5}
+  .cell.selectable-p1{cursor:pointer;border-color:var(--p1);background:var(--p1-soft);box-shadow:inset 0 0 0 1px var(--p1)}
+  .cell.selectable-p1:hover{background:#f3ddd8}
+  .cell.target{cursor:pointer;border-color:var(--p1);background:var(--p1-soft);box-shadow:inset 0 0 0 1px var(--p1)}
+  .cell.target:hover{background:#f1ddd5}
+  .cell.win{animation:pulse 1.1s ease infinite}
+  .cell.setdone{box-shadow:inset 0 0 0 2px rgba(46,125,91,.5)}
+  @keyframes pulse{0%,100%{box-shadow:inset 0 0 0 2px var(--ok)}50%{box-shadow:inset 0 0 0 2px rgba(46,125,91,.35)}}
+
+  .coin{
+    width:78%;height:78%;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-family:var(--serif);font-size:clamp(16px,5vw,24px);font-weight:500;user-select:none;
+    transition:transform .15s ease;position:relative;
+  }
+  .coin.p0.front{background:var(--p0);color:#fff}
+  .coin.p0.back{background:#fff;color:var(--p0);border:2px solid var(--p0)}
+  .coin.p1.front{background:var(--p1);color:#fff}
+  .coin.p1.back{background:#fff;color:var(--p1);border:2px solid var(--p1)}
+  .coin.shared.front{background:#7A4F9E;color:#fff}
+  .coin.shared.back{background:#fff;color:#7A4F9E;border:2px solid #7A4F9E}
+  .coin.puppet{background:#EDEBE4;color:#8C8B83;border:2px dashed #B6B5AD}
+  .coin.locked{box-shadow:0 0 0 2px #C9A227, 0 0 0 4px rgba(201,162,39,.25)}
+  .coin.locked::after{content:'🔒';position:absolute;font-size:10px;transform:translate(140%,-140%)}
+  .coin.flip{animation:flip .5s ease}
+  @keyframes flip{0%{transform:rotateY(0)}50%{transform:rotateY(90deg) scale(.9)}100%{transform:rotateY(0)}}
+
+  /* ---------- プレイヤーパネル ---------- */
+  .panels{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:min(100%,420px)}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+  .panel.active{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .pname{font-weight:700;font-size:14px;display:flex;align-items:center;gap:7px}
+  .badge{font-size:10px;letter-spacing:.1em;padding:2px 7px;border-radius:20px;border:1px solid var(--line-strong);color:var(--muted)}
+  .badge.oya{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .pmeta{font-size:11.5px;color:var(--muted)}
+  .hand{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .card-chip{
+    font-size:12px;padding:5px 9px;border-radius:8px;border:1px solid var(--line-strong);background:#FBFBF9;color:var(--ink);
+    cursor:default;transition:all .12s;font-family:var(--sans)
+  }
+  .card-chip.usable{cursor:pointer;border-color:var(--p0);color:var(--p0);background:var(--p0-soft);font-weight:500}
+  .card-chip.usable:hover{background:#dde6f5}
+  .card-chip.dead{opacity:.4}
+  .card-chip.locked-card{opacity:.55;background:#F3EFD8;border-color:#C9A227;color:#8a7320;cursor:not-allowed}
+  .desig{font-size:11px;color:var(--p0);margin-top:7px;font-weight:500}
+
+  /* ---------- アクションバー ---------- */
+  .actionbar{width:min(100%,420px);background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;box-shadow:var(--shadow)}
+  .turn-tag{font-size:12px;color:var(--muted);margin-bottom:10px;letter-spacing:.08em}
+  .turn-tag b{color:var(--ink)}
+  .instruction{font-size:13.5px;color:var(--ink);margin-bottom:12px;min-height:20px}
+  .instruction .hl{color:var(--p0);font-weight:600}
+  .instruction .hl.p1{color:var(--p1)}
+  .instruction .hl.p0{color:var(--p0)}
+  .acts{display:flex;gap:8px;flex-wrap:wrap}
+  .acts .btn{flex:1;min-width:120px}
+  .thinking{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;padding:6px 0}
+  .thinking .pip{width:6px;height:6px;border-radius:50%;background:var(--p1);animation:blink 1s infinite}
+  @keyframes blink{0%,100%{opacity:.25}50%{opacity:1}}
+
+  /* ---------- カード選択 ---------- */
+  .select-wrap{display:flex;flex-direction:column;gap:16px}
+  .select-head{text-align:center}
+  .select-head h2{font-family:var(--serif);font-size:24px;font-weight:700;margin:4px 0}
+  .select-status{font-size:13px;color:var(--muted)}
+  .select-status b{color:var(--ink)}
+  .pick-order{display:flex;gap:6px;justify-content:center;margin-top:8px}
+  .po{width:24px;height:6px;border-radius:3px;background:var(--line-strong)}
+  .po.p0{background:var(--p0)} .po.p1{background:var(--p1)} .po.now{outline:2px solid var(--ink);outline-offset:2px}
+  .card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media(max-width:560px){.card-grid{grid-template-columns:repeat(2,1fr)}}
+  .gcard{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;text-align:left;
+    transition:all .14s;position:relative;overflow:hidden
+  }
+  .gcard .gname{font-family:var(--serif);font-size:18px;font-weight:700;margin-bottom:6px}
+  .gcard .gdesc{font-size:11.5px;color:var(--muted);line-height:1.5}
+  .gcard.pick{cursor:pointer}
+  .gcard.pick:hover{border-color:var(--p0);transform:translateY(-2px);box-shadow:var(--shadow)}
+  .gcard.taken{opacity:.5}
+  .gcard .owner-flag{position:absolute;top:0;right:0;font-size:10px;letter-spacing:.08em;color:#fff;padding:3px 9px;border-bottom-left-radius:10px}
+  .gcard .owner-flag.p0{background:var(--p0)} .gcard .owner-flag.p1{background:var(--p1)}
+
+  /* ---------- 結果 ---------- */
+  .result-wrap{display:flex;flex-direction:column;gap:18px;align-items:center;text-align:center}
+  .result-wrap h2{font-family:var(--serif);font-size:26px;font-weight:700}
+  .scoreboard{width:min(100%,460px);background:var(--surface);border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:var(--shadow)}
+  .sb-row{display:grid;grid-template-columns:1.4fr 1fr 1fr;align-items:center;padding:13px 18px;border-bottom:1px solid var(--line);font-size:14px}
+  .sb-row:last-child{border-bottom:none}
+  .sb-row.head{font-size:11px;letter-spacing:.14em;color:var(--muted);background:#FBFBF9}
+  .sb-row.total{font-family:var(--serif);font-weight:700;font-size:16px;background:#FBFBF9}
+  .sb-row.subtotal{font-weight:600;font-size:14px;color:var(--ink);background:#fcfcfb;border-top:1px dashed var(--line)}
+  .sb-row .num{text-align:center;font-variant-numeric:tabular-nums}
+  .sb-name{display:flex;align-items:center;gap:8px}
+  .breakdown{font-size:12px;color:var(--muted)}
+
+  /* ---------- ルール ---------- */
+  .modal-bg{position:fixed;inset:0;background:rgba(28,28,26,.42);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+  .modal{background:#fff;border-radius:18px;max-width:560px;width:100%;max-height:84vh;overflow:auto;padding:26px 26px 30px;box-shadow:var(--shadow)}
+  .modal h3{font-family:var(--serif);font-size:22px;margin-bottom:14px}
+  .modal h4{font-size:13px;margin:16px 0 4px;color:var(--p0);letter-spacing:.04em}
+  .modal p,.modal li{font-size:13px;color:#3a3a36;line-height:1.7}
+  .modal ul{padding-left:18px}
+  .modal .close-row{display:flex;justify-content:flex-end;margin-top:20px}
+
+  /* ---------- 指定/汎用 choice ---------- */
+  .choice-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+  .toss-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:40;background:rgba(244,244,241,.7);backdrop-filter:blur(2px)}
+  .toss-card{background:#fff;padding:30px 40px;border-radius:18px;box-shadow:var(--shadow);text-align:center}
+  .toss-coin{width:96px;height:96px;border-radius:50%;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:34px}
+  .toss-coin.spin{animation:spin .7s ease}
+  @keyframes spin{0%{transform:rotateY(0)}100%{transform:rotateY(720deg)}}
+  .toss-label{font-size:14px;color:var(--muted)}
+
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 20px;border-radius:30px;font-size:13px;z-index:60;box-shadow:var(--shadow);animation:rise .3s ease}
+  @keyframes rise{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none!important;transition:none!important}
+  }
+
+  /* ---- 追加UI ---- */
+  .iconbtn{background:none;border:1px solid var(--line-strong);border-radius:8px;width:30px;height:30px;font-size:15px;line-height:1;cursor:pointer;color:var(--muted);transition:background .12s,color .12s}
+  .iconbtn:hover{background:#fff;color:var(--ink)}
+  .iconbtn:focus-visible{outline:2px solid var(--p0);outline-offset:2px}
+
+  /* ターンバナー */
+  .turn-banner{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;padding:9px 18px;border-radius:30px;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow);animation:tbpop .26s ease}
+  .turn-banner .tb-dot{width:11px;height:11px;border-radius:50%}
+  .turn-banner.p0{color:var(--p0)} .turn-banner.p0 .tb-dot{background:var(--p0);box-shadow:0 0 0 4px var(--p0-soft)}
+  .turn-banner.p1{color:var(--p1)} .turn-banner.p1 .tb-dot{background:var(--p1);box-shadow:0 0 0 4px var(--p1-soft)}
+  @keyframes tbpop{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+  .board{position:relative;transition:box-shadow .3s ease}
+  .board.turn-p0{box-shadow:var(--shadow),0 0 0 2px var(--p0),0 0 10px 3px var(--p0-soft),0 0 26px 10px var(--p0-glow),0 0 48px 22px var(--p0-faint)}
+  .board.turn-p1{box-shadow:var(--shadow),0 0 0 2px var(--p1),0 0 10px 3px var(--p1-soft),0 0 26px 10px var(--p1-glow),0 0 48px 22px var(--p1-faint)}
+
+  /* アクティブパネルを手番色で強調 */
+  .panel.active.a0{border-color:var(--p0);box-shadow:0 0 0 1px var(--p0)}
+  .panel.active.a1{border-color:var(--p1);box-shadow:0 0 0 1px var(--p1)}
+
+  /* 3組進捗ピップ */
+  .setrow{display:flex;align-items:center;gap:6px;margin-top:6px}
+  .setlabel{font-size:10.5px;color:var(--faint)}
+  .setpip{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--line-strong);background:transparent;transition:background .15s}
+  .setpip.on.p0{background:var(--p0);border-color:var(--p0)}
+  .setpip.on.p1{background:var(--p1);border-color:var(--p1)}
+
+  /* 直前の手 */
+  .lastmove{font-size:11.5px;color:var(--muted);background:#FBFBF9;border:1px solid var(--line);border-radius:8px;padding:5px 10px;margin-bottom:10px}
+
+  /* 奪取などのカードピッカー */
+  .modal.picker{max-width:480px}
+  .picker-head{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+  .picker-head h3{margin:0}
+  .picker-note{font-size:12px;color:var(--muted);margin-bottom:14px}
+  .pick-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:480px){.pick-grid{grid-template-columns:1fr}}
+  .pick-card{text-align:left;background:#FBFBF9;border:1px solid var(--line-strong);border-left:4px solid var(--pc);border-radius:10px;padding:12px 14px;cursor:pointer;transition:transform .12s,box-shadow .12s,background .12s;font-family:var(--sans)}
+  .pick-card:hover{transform:translateY(-2px);box-shadow:var(--shadow);background:#fff}
+  .pick-card:focus-visible{outline:2px solid var(--pc);outline-offset:2px}
+  .pc-name{display:block;font-family:var(--serif);font-weight:700;font-size:16px;margin-bottom:4px;color:var(--ink)}
+  .pc-desc{display:block;font-size:11px;color:var(--muted);line-height:1.5}
+
+  /* 設定モーダル */
+  .set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0;flex-wrap:wrap}
+  .set-label{font-size:13.5px;font-weight:500}
+  .set-divider{height:1px;background:var(--line);margin:18px 0}
+  .mode-seg.sm{margin:0;padding:3px}
+  .mode-seg.sm .seg{padding:7px 13px;font-size:12.5px}
+  .seg.locked{opacity:.4;cursor:not-allowed}
+  .mode-seg.wrap{flex-wrap:wrap;max-width:300px}
+  .name-input{font-family:var(--sans);font-size:14px;color:var(--ink);background:#fff;border:1px solid var(--line-strong);border-radius:8px;padding:9px 12px;width:160px;max-width:50%}
+  .name-input:focus{outline:2px solid var(--p0);outline-offset:1px;border-color:var(--p0)}
+  /* ユーザーバッジ */
+  .user-badge{display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:6px 14px;margin-bottom:16px}
+  .user-name{font-weight:700;color:var(--ink);font-size:15px}
+  .user-id{font-size:12px;color:var(--muted);letter-spacing:.05em}
+  .surrender-row{display:flex;justify-content:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+
+  /* カード使用：中央大型アニメ */
+  .card-use-anim{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:120}
+  .cua-card{min-width:200px;max-width:78vw;padding:22px 30px;border-radius:18px;background:#fff;border:3px solid var(--cua);
+    box-shadow:0 10px 40px rgba(0,0,0,.25),0 0 0 6px color-mix(in srgb,var(--cua) 18%,transparent);
+    text-align:center;transform:scale(.6);opacity:0;animation:cua 1.25s cubic-bezier(.2,1.1,.3,1) forwards}
+  .cua-user{font-size:13px;color:var(--ink-soft,#6b6b66);font-weight:700;margin-bottom:6px;display:flex;align-items:center;justify-content:center;gap:6px}
+  .cua-name{font-family:var(--serif);font-size:34px;font-weight:800;color:var(--cua);line-height:1.1}
+  .cua-desc{margin-top:8px;font-size:12.5px;color:#555;line-height:1.5}
+  @keyframes cua{
+    0%{transform:scale(.6);opacity:0}
+    15%{transform:scale(1.05);opacity:1}
+    28%{transform:scale(1)}
+    78%{transform:scale(1);opacity:1}
+    100%{transform:scale(.95);opacity:0}
+  }
+  /* 画面シェイク */
+  @keyframes shakeAnim{
+    0%,100%{transform:translate(0,0)}
+    15%{transform:translate(-2.5px,1.5px)}
+    30%{transform:translate(2.5px,-1.5px)}
+    45%{transform:translate(-2px,-1px)}
+    60%{transform:translate(2px,1px)}
+    75%{transform:translate(-1px,1px)}
+    90%{transform:translate(1px,-0.5px)}
+  }
+  #app.shake{animation:shakeAnim .42s ease}
+  /* 設置マスのフラッシュフェード演出 */
+  .cell-place-flash{
+    position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:5;
+    opacity:.55;animation:cellFlash .7s ease-out forwards;
+  }
+  @keyframes cellFlash{
+    0%{opacity:.6}
+    30%{opacity:.45}
+    100%{opacity:0}
+  }
+  /* 結果画面の盤面＋ライン */
+  .result-board-wrap{display:flex;justify-content:center;margin:14px 0 6px}
+  .result-svg{width:min(320px,82vw);height:auto}
+  .result-legend{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;font-size:12px;color:#555;margin-bottom:6px}
+  .result-legend span{display:inline-flex;align-items:center;gap:6px}
+  .lg-line{width:20px;height:5px;border-radius:3px;display:inline-block}
+  .lg-line.p0{background:var(--p0)} .lg-line.p1{background:var(--p1)}
+  .lg-note{color:#999}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ============================================================
+   表裏陣取り — ロジック
+   ============================================================ */
+const MY=0, OPP=1; // オンライン: MY=自分, OPP=相手
+const FRONT='f', BACK='b';
+const faceLabel=f=>f===FRONT?'表':'裏';
+const pname=p=> (S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あなた':'相手');
+const isHuman=p=> S && S.myRole!==null ? p===S.myRole : p===MY;  // 自分のroleと一致するプレイヤーのみ操作可
+// 設定は match を跨いで保持（newMatchでリセットしない）
+let SETTINGS={ sound:true, anim:true, shake:true };
+
+const CARD_INFO={
+  shitei:{name:'指定', desc:'次の相手と自分のコイントス結果を、選択した向きに固定する。', prio:6},
+  nurikeshi:{name:'色抜き', desc:'相手のコイン1枚を選び、色をなくす。そのコインは両者のコイン扱いになり、常に自分のコインとして認識される。', prio:5},
+  kakumei:{name:'革命', desc:'盤面上のすべてのコインを表向きにする。', prio:4},
+  ido:{name:'移動', desc:'自分のコイン1枚を縦横斜めどちらかに1マス、空きマスへ移動させる。', prio:3},
+  kagikake:{name:'鍵掛け', desc:'自分のコイン1枚に鍵をかける。対象のコインはあらゆるカード効果の対象にならず、状態が変化しない。', prio:7},
+  fukusei:{name:'複製', desc:'自分のカード1枚を選び、複製する。同じカードが手札に2枚になる。', prio:2},
+  uragaeshi:{name:'裏返し', desc:'相手のコイン1枚を裏返す。そのコインは次の自分のターンまでロックされ、状態が変化しない。', prio:5},
+  teitai:{name:'停滞', desc:'相手の未使用カード1枚を選ぶ。自分の2回目のターン開始時まで、相手はそのカードを使用できない。', prio:5},
+  chudan:{name:'中断', desc:'どちらかが一列以上揃っている時のみ使用可。自分の未使用カードを全て捨て、ゲームを即座に終了する。', prio:2},
+};
+const ALL_CARDS=['shitei','nurikeshi','kakumei','ido','kagikake','fukusei','uragaeshi','teitai','chudan'];
+
+/* ---- ライン列挙（検証済み：4行+4列+6斜=14） ---- */
+function buildLines(){
+  const L=[];
+  for(let r=0;r<4;r++) L.push([0,1,2,3].map(c=>r*4+c));
+  for(let c=0;c<4;c++) L.push([0,1,2,3].map(r=>r*4+c));
+  for(const [dr,dc] of [[1,1],[1,-1]]){
+    for(let r=0;r<4;r++) for(let c=0;c<4;c++){
+      const pr=r-dr, pc=c-dc;
+      if(pr>=0&&pr<4&&pc>=0&&pc<4) continue;
+      const cells=[]; let rr=r,cc=c;
+      while(rr>=0&&rr<4&&cc>=0&&cc<4){ cells.push(rr*4+cc); rr+=dr; cc+=dc; }
+      if(cells.length>=3) L.push(cells);
+    }
+  }
+  return L;
+}
+const LINES=buildLines();
+
+// プレイヤー p 視点の連を列挙（owner一致／共有／木偶で連結、面一致）。
+// scoring=true のときは点数計算用に「木偶を含む連は除外」する。
+function runsForPlayer(board,line,p,scoring){
+  const out=[]; let i=0;
+  const belongs=x=>x&&(x.owner===p||x.shared||x.type==='puppet');
+  while(i<line.length){
+    const c=board[line[i]];
+    if(!belongs(c)){ i++; continue; }
+    let j=i+1;
+    while(j<line.length){ const x=board[line[j]]; if(belongs(x)&&x.face===c.face) j++; else break; }
+    const cells=line.slice(i,j), len=j-i;
+    if(len>=3){
+      const hasPuppet=cells.some(idx=>board[idx]&&board[idx].type==='puppet');
+      if(!(scoring&&hasPuppet)) out.push({len,cells,hasPuppet});
+    }
+    i=j;
+  }
+  return out;
+}
+function boardScore(board){
+  const s=[0,0];
+  for(const p of [0,1]) for(const line of LINES) for(const r of runsForPlayer(board,line,p,true)){
+    s[p]+=(r.len-2)*3;  // 得点：3連=3点, 4連=6点（木偶含む連は除外済み）
+  }
+  return s;
+}
+// 揃った「3連」の組数。4連は3連を2つ含むので2組としてカウントする（得点計算と一致）。
+// shared コインを含む連は、連内の非shared実コインの多数派ownerにのみ帰属させる
+// （両者にダブルカウントすると終了判定が誤発動するため）
+function lineCount(board){
+  const c=[0,0];
+  for(const p of [0,1]) for(const line of LINES){
+    for(const r of runsForPlayer(board,line,p,true)){
+      // 連内の非sharedコインのオーナーを数える
+      let cnt0=0, cnt1=0;
+      for(const idx of r.cells){
+        const coin=board[idx];
+        if(!coin||coin.shared||coin.type==='puppet') continue;
+        if(coin.owner===0) cnt0++; else cnt1++;
+      }
+      // 非sharedコインが存在する場合：多数派ownerの連としてのみカウント
+      // 非sharedコインが0（全部shared/puppet）：両者にカウント（稀なケース）
+      const dominant = cnt0===0&&cnt1===0 ? null : (cnt0>=cnt1?0:1);
+      if(dominant===null||dominant===p) c[p]+=(r.len-2);
+    }
+  }
+  return c;
+}
+function winningCells(board){ // 点になる揃いを構成するセル集合（ハイライト用）
+  const set=new Set();
+  for(const p of [0,1]) for(const line of LINES) for(const r of runsForPlayer(board,line,p,true)) r.cells.forEach(c=>set.add(c));
+  return set;
+}
+function setCounts(board){ return lineCount(board); } // 揃いの組数＝並びの本数
+function gameEnds(board){ const c=lineCount(board); return c[0]>=3 || c[1]>=3; } // どちらかが3本（3組）以上揃ったら終了
+function anyThree(board){
+  // どちらかのプレイヤーで「点になる（木偶を含まない）3連以上」があるか
+  for(const p of [0,1]) for(const line of LINES) if(runsForPlayer(board,line,p,true).length) return true;
+  return false;
+}
+// 得点になった連の一覧（結果画面のライン描画用）。各 {player, cells, len} 。
+function scoringRuns(board){
+  const runs=[];
+  for(const p of [0,1]) for(const line of LINES) for(const r of runsForPlayer(board,line,p,true)){
+    runs.push({player:p, cells:r.cells.slice(), len:r.len});
+  }
+  return runs;
+}
+const cloneBoard=b=>b.map(c=>c?{owner:c.owner,face:c.face,shared:c.shared,locked:c.locked,type:c.type}:null);
+const emptyCells=b=>{const a=[];for(let i=0;i<16;i++) if(!b[i]) a.push(i); return a;};
+// 共有コイン・木偶は常に「自分のコイン」として扱う
+const ownCoins=(b,p)=>{const a=[];for(let i=0;i<16;i++){const c=b[i]; if(c&&(c.owner===p||c.shared||c.type==='puppet')) a.push(i);} return a;};
+const toss=()=>Math.random()<.5?FRONT:BACK;
+const neighbors=i=>{const r=Math.floor(i/4),c=i%4,a=[];if(r>0)a.push(i-4);if(r<3)a.push(i+4);if(c>0)a.push(i-1);if(c<3)a.push(i+1);return a;};
+// 移動カード用：縦横斜め8方向
+const neighbors8=i=>{const r=Math.floor(i/4),c=i%4,a=[];for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){if(dr===0&&dc===0)continue;const nr=r+dr,nc=c+dc;if(nr>=0&&nr<4&&nc>=0&&nc<4)a.push(nr*4+nc);}return a;};
+
+/* ============================================================
+   ゲーム状態
+   ============================================================ */
+let S=null;
+function newMatch(){
+  S={
+    phase:'title',
+    gameIndex:0,
+    totals:[0,0],
+    gameLog:[],
+    parent:null,
+    current:null,
+    board:Array(16).fill(null),
+    coins:[8,8],
+    hands:[[],[]],
+    designate:[null,null],
+    sel:null,
+    pending:null,
+    over:false,
+    lastBreakdown:null,
+    busy:false,
+    pnames:[null,null],
+    surrenderVotes:[null,null],
+    cardLocks:[],
+    roomId:null,           // Firestoreのルームid
+    myRole:null,           // 0=p0, 1=p1
+    lastActionId:null,     // 重複実行防止
+  };
+}
+
+/* ---- ゲーム開始（盤面・手札リセット、親はゲーム1のみトス後に確定） ---- */
+function startGame(){
+  S.board=Array(16).fill(null);
+  S.coins=[8,8];
+  S.hands=[[],[]];
+  S.designate=[null,null];
+  S.pending=null; S.over=false; S.busy=false; S.lastMove=null;
+  S.surrenderVotes=[null,null];
+  S.cardLocks=[];
+  S.flipCooldown=[0,0]; // 裏返し使用後クールダウン（カウンター: 2→1→0で解除）
+  // 親決定
+  if(S.gameIndex===0){
+    S.phase='toss'; render(); return; // トス画面へ
+  } else {
+    const prev=S.gameLog[S.gameIndex-1];
+    if(prev.score[0]===prev.score[1]){
+      // 同点 → 前ゲームで親でなかった方
+      S.parent = prev.parent===0?1:0;
+    } else {
+      // 得点が低い方
+      S.parent = prev.score[0]<prev.score[1]?0:1;
+    }
+    beginSelect();
+  }
+}
+const SELECT_COUNT=6;  // 両者3枚ずつ＝計6枚を交互に選ぶ
+function beginSelect(){
+  // 先攻=親。カード選択は親から交互。9種から各自3枚を選ぶ。
+  const order=[];
+  let t=S.parent;
+  for(let k=0;k<SELECT_COUNT;k++){ order.push(t); t=t===0?1:0; }
+  S.sel={available:new Set(ALL_CARDS), order, step:0};
+  S.phase='select'; render();
+}
+
+/* ============================================================
+   カード選択
+   ============================================================ */
+function pickCard(cardId){
+  if(S.phase!=='select') return;
+  const who=S.sel.order[S.sel.step];
+  if(!isHuman(who)) return;
+  if(!S.sel.available.has(cardId)) return;
+  commitPick(cardId);
+}
+function commitPick(cardId){
+  const who=S.sel.order[S.sel.step];
+  S.sel.available.delete(cardId);
+  S.hands[who].push(cardId);
+  sfx('pick');
+  // 自分が選択したときのみ送信
+  if(who===S.myRole) FB.sendAction({type:'pick', card:cardId});
+  S.sel.step++;
+  if(S.sel.step>=SELECT_COUNT){
+    S.current = S.parent;
+    S.phase='play';
+    render();
+    return;
+  }
+  render();
+}
+/* ============================================================
+   行動の適用（共通処理）
+   各 apply* は board / coins / designate を直接変更
+   ============================================================ */
+function placeCoin(player, cell, face){
+  S.board[cell]={owner:player,face};
+  S.coins[player]--;
+  S.designate[player]=null; // 配置で指定効果消費
+  S.placeFx={cell, player};  // 描画後にドット散り演出を出す
+  sfx('place'); shakeScreen();
+}
+function afterAction(actionEndsGame=false){
+  // 3組達成 / 8枚目設置 / 中断 のいずれかで終了
+  const ends=gameEnds(S.board);
+  if(ends || S._justPlacedEighth || actionEndsGame){
+    S._justPlacedEighth=false;
+    endGame();
+    return true;
+  }
+  S._justPlacedEighth=false;
+  // ターン交代前に「今のプレイヤー」のクールダウンをカウントダウン
+  // （使用したターンが終わるごとに減算。0になったら次のターンから再使用可）
+  if(S.flipCooldown && S.flipCooldown[S.current]>0){
+    S.flipCooldown[S.current]--;
+  }
+  // ターン交代
+  S.current = S.current===0?1:0;
+  releaseLocksFor(S.current);
+  render();
+  return false;
+}
+// releaseFor が p のロックを1段階進める（turns減算、0で解除）。コインの一時ロックも解除。
+function releaseLocksFor(p){
+  let released=false;
+  // カードロック（裏返し効果はコイン側だが、停滞はカード側）
+  if(S.cardLocks&&S.cardLocks.length){
+    for(const l of S.cardLocks){ if(l.releaseFor===p) l.turns--; }
+    const before=S.cardLocks.length;
+    S.cardLocks=S.cardLocks.filter(l=>l.turns>0);
+    if(S.cardLocks.length<before) released=true;
+  }
+  // コインの一時ロック（裏返し）
+  for(const c of S.board){
+    if(c && c.tempLockFor===p){ c.tempLockTurns--; if(c.tempLockTurns<=0){ delete c.locked; delete c.tempLockFor; delete c.tempLockTurns; released=true; } }
+  }
+  if(released) toastMsg('ロックが解除されました');
+}
+// 指定プレイヤーのカードがロック中か（同一IDのロック枚数を考慮）
+function lockedCount(player,card){
+  return (S.cardLocks||[]).filter(l=>l.owner===player&&l.card===card).length;
+}
+
+/* ============================================================
+   得点計算・ゲーム終了
+   ============================================================ */
+function endGame(){
+  S.over=true; S.busy=false; S.pending=null;
+  const bs=boardScore(S.board);
+  const cardPts=[S.hands[0].length, S.hands[1].length];
+  const total=[bs[0]+cardPts[0], bs[1]+cardPts[1]];
+  S.totals[0]+=total[0]; S.totals[1]+=total[1];
+  const rec={parent:S.parent, board:bs, cards:cardPts, score:total,
+    snapshot:cloneBoard(S.board),            // 終了時の盤面
+    runs:scoringRuns(S.board),               // 得点になった連
+    sets:setCounts(S.board)                  // 組数
+  };
+  S.gameLog[S.gameIndex]=rec;
+  S.lastBreakdown=rec;
+  S.phase='result';
+  sfx('end');
+  render();
+}
+function nextGame(){
+  S.gameIndex++;
+  if(S.gameIndex>=3){ S.phase='final'; render(); return; }
+  startGame();
+}
+
+/* ============================================================
+   人間の操作フロー
+   ============================================================ */
+function humanAction(type, fixedTossResult=null){
+  if(S.phase!=='play'||!isHuman(S.current)||S.busy) return;
+  const p=S.current;
+  if(type==='place'){
+    if(S.coins[p]<=0 || emptyCells(S.board).length===0) return;
+    if(S.designate[p]){
+      S.pending={type:'placeCell', face:S.designate[p], designated:true};
+      render();
+    } else {
+      doToss(face=>{
+        S.pending={type:'placeCell', face};
+        render();
+      }, fixedTossResult);
+    }
+  } else if(type==='flip'){
+    if(ownCoins(S.board,p).length===0) return;
+    if(S.flipCooldown&&S.flipCooldown[p]){ toastMsg('裏返しは前回使用から1ターン空ける必要があります'); return; }
+    S.pending={type:'flip'}; render();
+  }
+}
+function clickCard(cardId){
+  if(S.phase!=='play'||!isHuman(S.current)||S.busy) return;
+  if(S.pending) return;  // 別カード/操作の選択中は新たなカードを使えない（多重発動防止）
+  const p=S.current;
+  if(!S.hands[p].includes(cardId)) return;
+  if(!cardUsable(p,cardId)) return;
+  startCardUse(cardId);
+}
+function startCardUse(cardId){
+  const p=S.current;
+  switch(cardId){
+    case 'kakumei':
+      consumeCard(p,'kakumei');
+      S.board.forEach(c=>{if(c && !c.locked && c.type!=='puppet') c.face=FRONT;});
+      sfx('card'); setLastMove(`${pname(p)}：革命`);
+      showCardUse(p,'kakumei'); shakeScreen();
+      toastMsg('革命：すべて表になった');
+      FB.sendAction({type:'card', card:'kakumei'});
+      afterAction(); break;
+    case 'chudan':
+      if(!anyThree(S.board)){
+        toastMsg('中断は、どちらかが一列以上揃っている時のみ使用できます');
+        return;
+      }
+      consumeCardUseAnim(p,'chudan');
+      S.hands[p]=[];
+      sfx('card'); setLastMove(`${pname(p)}：中断`);
+      toastMsg('中断：ゲームを終了します');
+      FB.sendAction({type:'card', card:'chudan'});
+      afterAction(true); break;
+    case 'shitei':
+      S.pending={type:'shitei', card:'shitei'}; render(); break;
+    case 'nurikeshi':
+      S.pending={type:'nurikeshi', card:'nurikeshi'}; render(); break;
+    case 'ido':
+      S.pending={type:'moveFrom', card:'ido'}; render(); break;
+    case 'kagikake':
+      S.pending={type:'kagikake', card:'kagikake'}; render(); break;
+    case 'uragaeshi':
+      S.pending={type:'uragaeshi', card:'uragaeshi'}; render(); break;  // 盤面で相手のコインを選ぶ
+    case 'teitai':
+      teitaiFlow(p); break;  // モーダルで相手のカードを選択（完了時に消費・ロック付与）
+    case 'fukusei':
+      duplicateFlow(p); break;  // モーダルで複製するカードを選択（完了時に消費）
+  }
+}
+// カード使用演出（中央大型表示）＋消費をまとめて行うヘルパ
+function consumeCardUseAnim(p,cardId){ consumeCard(p,cardId); showCardUse(p,cardId); shakeScreen(); }
+function consumeCard(player,cardId){
+  const i=S.hands[player].indexOf(cardId);
+  if(i>=0) S.hands[player].splice(i,1);
+}
+
+/* ---- 盤面セルクリック ---- */
+function clickCell(idx){
+  if(!isHuman(S.current)||S.busy||!S.pending) return;
+  const me=S.current, opp=me^1, pd=S.pending, cell=S.board[idx];
+  if(pd.type==='placeCell'){
+    if(cell) return;
+    placeCoin(me, idx, pd.face);
+    if(S.coins[me]===0) S._justPlacedEighth=true;
+    setLastMove(`${pname(me)}：${faceLabel(pd.face)}を配置`);
+    S.pending=null;
+    FB.sendAction({type:'place', cell:idx, face:pd.face});
+    afterAction();
+  } else if(pd.type==='flip'){
+    if(!cell||cell.type==='puppet'||cell.locked) return;
+    if(!(cell.owner===me||cell.shared)) return;
+    cell.face = cell.face===FRONT?BACK:FRONT;
+    if(!S.flipCooldown) S.flipCooldown=[0,0];
+    S.flipCooldown[me]=2;
+    sfx('flip'); shakeScreen(); setLastMove(`${pname(me)}：コインを裏返した`);
+    S.pending=null;
+    FB.sendAction({type:'flip', cell:idx});
+    afterAction();
+  } else if(pd.type==='nurikeshi'){
+    if(!cell||cell.owner!==opp||cell.locked||cell.type==='puppet'||cell.shared) return;
+    consumeCardUseAnim(me,'nurikeshi');
+    cell.shared=true;
+    sfx('card'); setLastMove(`${pname(me)}：色抜き`);
+    toastMsg('色抜き：相手コインを両者のコインにした');
+    S.pending=null;
+    FB.sendAction({type:'card', card:'nurikeshi', cell:idx});
+    afterAction();
+  } else if(pd.type==='uragaeshi'){
+    if(!cell||cell.owner!==opp||cell.locked||cell.type==='puppet') return;
+    consumeCardUseAnim(me,'uragaeshi');
+    cell.face = cell.face===FRONT?BACK:FRONT;
+    cell.locked=true; cell.tempLockFor=me; cell.tempLockTurns=1;
+    sfx('flip'); setLastMove(`${pname(me)}：裏返し`);
+    toastMsg('裏返し：相手コインを裏返してロックした');
+    S.pending=null;
+    FB.sendAction({type:'card', card:'uragaeshi', cell:idx});
+    afterAction();
+  } else if(pd.type==='kagikake'){
+    if(!cell||cell.type==='puppet'||cell.locked) return;
+    if(!(cell.owner===me||cell.shared)) return;
+    consumeCardUseAnim(me,'kagikake');
+    cell.locked=true;
+    sfx('card'); setLastMove(`${pname(me)}：鍵掛け`);
+    toastMsg('鍵掛け：このコインは効果を受けず変化しない');
+    S.pending=null;
+    FB.sendAction({type:'card', card:'kagikake', cell:idx});
+    afterAction();
+  } else if(pd.type==='moveFrom'){
+    if(!cell||cell.type==='puppet'||cell.locked) return;
+    if(!(cell.owner===me||cell.shared)) return;
+    const dests=neighbors8(idx).filter(n=>!S.board[n]);
+    if(dests.length===0){ toastMsg('そのコインは移動できません'); return; }
+    S.pending={type:'moveTo', from:idx, card:'ido'}; render();
+  } else if(pd.type==='moveTo'){
+    if(cell) return;
+    if(!neighbors8(pd.from).includes(idx)) return;
+    consumeCardUseAnim(me,'ido');
+    S.board[idx]=S.board[pd.from]; S.board[pd.from]=null;
+    sfx('card'); setLastMove(`${pname(me)}：移動`);
+    S.pending=null;
+    FB.sendAction({type:'card', card:'ido', from:pd.from, to:idx});
+    afterAction();
+  }
+}
+/* ---- 指定の表/裏選択 ---- */
+function chooseDesignate(face){
+  if(!S.pending||S.pending.type!=='shitei') return;
+  const p=S.current;
+  consumeCardUseAnim(p,'shitei');
+  S.designate[0]=face;
+  S.designate[1]=face;
+  S.pending=null;
+  sfx('card'); setLastMove(`${pname(p)}：指定（${faceLabel(face)}）`);
+  toastMsg(`指定：次の相手と自分のコイントス結果を${faceLabel(face)}に固定`);
+  FB.sendAction({type:'card', card:'shitei', face});
+  afterAction();
+}
+/* ---- 複製：手札から1枚選び、複製を手札に追加 ---- */
+function duplicateFlow(p){
+  cardPickerModal({
+    title:'複製  複製する自分のカード',
+    note:'選んだカードと同じカードが手札に1枚追加されます。',
+    cards:S.hands[p].filter(c=>c!=='fukusei').length ? S.hands[p].filter(c=>c!=='fukusei') : S.hands[p].slice(),
+    side:p,
+    onPick:(dupId)=>{
+      consumeCardUseAnim(p,'fukusei');
+      S.hands[p].push(dupId);
+      sfx('card'); setLastMove(`${pname(p)}：複製（${CARD_INFO[dupId].name}）`);
+      toastMsg(`複製：「${CARD_INFO[dupId].name}」を複製した`);
+      FB.sendAction({type:'card', card:'fukusei', dup:dupId});
+      afterAction();
+    },
+    onCancel:()=>{}  // 中止（fukuseiは消費されない）
+  });
+}
+/* ---- 停滞：相手のカード1枚を、発動者の2回目の手番開始までロック ---- */
+function teitaiFlow(p){
+  const opp=p^1;
+  // 相手の手札のうち、まだロックしきっていないカード（重複は1つにまとめて表示）
+  const targets=[...new Set(S.hands[opp])].filter(c=>lockedCount(opp,c)<countCard(opp,c));
+  cardPickerModal({
+    title:'停滞  使用を止める相手のカード',
+    note:'選んだカードは、あなたの2回目のターン開始時まで相手は使えません。',
+    cards:targets, side:opp,
+    onPick:(lockId)=>{
+      consumeCardUseAnim(p,'teitai');
+      S.cardLocks.push({owner:opp, card:lockId, releaseFor:p, turns:2});
+      sfx('card'); setLastMove(`${pname(p)}：停滞（${CARD_INFO[lockId].name}）`);
+      toastMsg(`停滞：相手の「${CARD_INFO[lockId].name}」を止めた`);
+      FB.sendAction({type:'card', card:'teitai', lock:lockId});
+      afterAction();
+    },
+    onCancel:()=>{}  // 中止（teitaiは消費されない）
+  });
+}
+function cardPickerModal({title,note,cards,side,onPick,onCancel}){
+  const bg=document.createElement('div'); bg.className='modal-bg';
+  const chips=cards.map(id=>
+    `<button class="pick-card" data-id="${id}" style="--pc:${side===0?'var(--p0)':'var(--p1)'}">
+       <span class="pc-name">${CARD_INFO[id].name}</span>
+       <span class="pc-desc">${CARD_INFO[id].desc}</span>
+     </button>`).join('');
+  bg.innerHTML=`<div class="modal picker">
+      <div class="picker-head"><span class="dot ${side===0?'p0':'p1'}"></span><h3>${title}</h3></div>
+      <p class="picker-note">${note||''}</p>
+      <div class="pick-grid">${chips}</div>
+      <div class="close-row"><button class="btn ghost sm" id="pick-cancel">キャンセル</button></div>
+    </div>`;
+  document.body.appendChild(bg);
+  bg.querySelectorAll('.pick-card').forEach(el=>{
+    el.onclick=()=>{ sfx('click'); bg.remove(); onPick(el.dataset.id); };
+  });
+  document.getElementById('pick-cancel').onclick=()=>{ bg.remove(); if(onCancel) onCancel(); };
+  bg.onclick=e=>{ if(e.target===bg){ bg.remove(); if(onCancel) onCancel(); } };
+}
+
+/* ---- 使用条件 ---- */
+function cardUsable(player,cardId){
+  const opp=player===0?1:0;
+  if(lockedCount(player,cardId)>=countCard(player,cardId)) return false;  // 全てロック中なら使用不可
+  switch(cardId){
+    case 'nurikeshi': return S.board.some(c=>c&&c.owner===opp&&!c.locked&&!c.shared&&c.type!=='puppet');
+    case 'chudan': return anyThree(S.board);
+    case 'kakumei': return true;
+    case 'ido': return ownCoins(S.board,player).some(i=>!S.board[i].locked&&S.board[i].type!=='puppet'&&neighbors8(i).some(n=>!S.board[n]));
+    case 'kagikake': return ownCoins(S.board,player).some(i=>!S.board[i].locked&&S.board[i].type!=='puppet');
+    case 'fukusei': return S.hands[player].length>=1;
+    case 'uragaeshi': return S.board.some(c=>c&&c.owner===opp&&!c.locked&&c.type!=='puppet');
+    case 'teitai': return S.hands[opp].some(c=>lockedCount(opp,c)<countCard(opp,c));
+    case 'shitei': return true;
+  }
+  return false;
+}
+// 手札中の指定カード枚数
+function countCard(player,card){ return S.hands[player].filter(c=>c===card).length; }
+
+/* ============================================================
+   コイントス演出
+   ============================================================ */
+// result: null=自分がトス（乱数）, string=受信した結果でアニメのみ
+function doToss(cb, fixedResult=null){
+  S.busy=true; render();
+  const result = fixedResult !== null ? fixedResult : toss();
+  // 自分がトスを決定した場合のみ送信（相手のトスは受信済みなので送らない）
+  if(fixedResult===null) FB.sendAction({type:'tossResult', face:result});
+  sfx('toss');
+  const reduce=!animOn();
+  let tickTimer=null;
+  if(!reduce && SETTINGS.sound){
+    let n=0;
+    tickTimer=setInterval(()=>{ sfx('tosstick'); if(++n>10) clearInterval(tickTimer); }, 70);
+  }
+  const stopTick=()=>{ if(tickTimer){ clearInterval(tickTimer); tickTimer=null; } };
+  const ov=document.createElement('div'); ov.className='toss-overlay';
+  ov.innerHTML=`<div class="toss-card">
+    <div class="toss-coin ${reduce?'':'spin'} coin-toss" style="background:${result===FRONT?'var(--ink)':'#fff'};color:${result===FRONT?'#fff':'var(--ink)'};border:${result===FRONT?'none':'2px solid var(--ink)'}">？</div>
+    <div class="toss-label">コイントス…</div></div>`;
+  document.body.appendChild(ov);
+  const reveal=()=>{
+    stopTick();
+    const coin=ov.querySelector('.coin-toss');
+    coin.textContent=faceLabel(result);
+    ov.querySelector('.toss-label').innerHTML=`<b style="color:var(--ink)">${faceLabel(result)}</b> が出た`;
+    setTimeout(()=>{ ov.remove(); S.busy=false; cb(result); }, reduce?500:600);
+  };
+  setTimeout(reveal, reduce?250:720);
+}
+
+
+/* ============================================================
+   トースト
+   ============================================================ */
+let toastTimer=null;
+function toastMsg(t){
+  const old=document.querySelector('.toast'); if(old) old.remove();
+  const el=document.createElement('div'); el.className='toast'; el.textContent=t;
+  document.body.appendChild(el);
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.remove(),2200);
+}
+function setLastMove(t){ if(S) S.lastMove=t; }
+function animOn(){ return SETTINGS.anim && !window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+
+/* ---- 演出：カード使用の中央大型表示 ---- */
+function showCardUse(player,cardId){
+  if(!animOn()) return;
+  const info=CARD_INFO[cardId]; if(!info) return;
+  const old=document.querySelector('.card-use-anim'); if(old) old.remove();
+  const wrap=document.createElement('div'); wrap.className='card-use-anim';
+  const colorVar = player===0?'var(--p0)':'var(--p1)';
+  wrap.innerHTML=`
+    <div class="cua-card" style="--cua:${colorVar}">
+      <div class="cua-user"><span class="dot ${player===0?'p0':'p1'}"></span>${pname(player)} が使用</div>
+      <div class="cua-name">${info.name}</div>
+      <div class="cua-desc">${info.desc}</div>
+    </div>`;
+  document.body.appendChild(wrap);
+  // アニメ終了で自動消去（CSS側 1.25s）
+  setTimeout(()=>{ if(wrap.parentNode) wrap.remove(); },1300);
+}
+/* ---- 演出：画面シェイク ---- */
+function shakeScreen(){
+  if(!animOn()||!SETTINGS.shake) return;
+  const app=document.getElementById('app'); if(!app) return;
+  app.classList.remove('shake'); void app.offsetWidth; // リフロー強制で再発火
+  app.classList.add('shake');
+  setTimeout(()=>app.classList.remove('shake'),460);
+}
+/* ---- 演出：紙吹雪（Canvas自前実装・外部ライブラリ不要） ---- */
+(function(){
+  let _canvas=null, _ctx=null, _particles=[], _raf=null, _stopTimer=null;
+
+  function ensureCanvas(){
+    if(_canvas) return;
+    _canvas=document.createElement('canvas');
+    _canvas.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999;';
+    document.body.appendChild(_canvas);
+    resize();
+    window.addEventListener('resize', resize);
+  }
+  function resize(){
+    if(!_canvas) return;
+    _canvas.width=window.innerWidth;
+    _canvas.height=window.innerHeight;
+  }
+  function removeCanvas(){
+    if(!_canvas) return;
+    window.removeEventListener('resize', resize);
+    _canvas.remove(); _canvas=null; _ctx=null;
+  }
+
+  function Particle(x, colors, velX, velY){
+    this.x=x * window.innerWidth;
+    this.y=-10;
+    this.w=7+Math.random()*6;
+    this.h=4+Math.random()*4;
+    this.color=colors[Math.floor(Math.random()*colors.length)];
+    this.vx=velX+(Math.random()-0.5)*3;
+    this.vy=velY+Math.random()*4;
+    this.gravity=0.18+Math.random()*0.1;
+    this.angle=Math.random()*Math.PI*2;
+    this.spin=(Math.random()-0.5)*0.3;
+    this.drift=(Math.random()-0.5)*0.15;
+    this.opacity=1;
+    this.fade=0.004+Math.random()*0.003;
+    // 形状: 0=長方形, 1=細長, 2=正方形
+    this.shape=Math.floor(Math.random()*3);
+  }
+  Particle.prototype.update=function(){
+    this.vy+=this.gravity;
+    this.vx+=this.drift;
+    this.vx*=0.99;
+    this.x+=this.vx;
+    this.y+=this.vy;
+    this.angle+=this.spin;
+    if(this.y > window.innerHeight * 0.85) this.opacity-=this.fade*4;
+    else this.opacity-=this.fade*0.3;
+  };
+  Particle.prototype.draw=function(ctx){
+    ctx.save();
+    ctx.globalAlpha=Math.max(0,this.opacity);
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+    ctx.fillStyle=this.color;
+    if(this.shape===0) ctx.fillRect(-this.w/2,-this.h/2,this.w,this.h);
+    else if(this.shape===1) ctx.fillRect(-this.w/2,-this.h/4,this.w,this.h/2);
+    else ctx.fillRect(-this.h/2,-this.h/2,this.h,this.h);
+    ctx.restore();
+  };
+
+  function loop(){
+    if(!_canvas){ _raf=null; return; }
+    _ctx=_ctx||_canvas.getContext('2d');
+    _ctx.clearRect(0,0,_canvas.width,_canvas.height);
+    _particles=_particles.filter(p=>p.opacity>0 && p.y<_canvas.height+20);
+    for(const p of _particles){ p.update(); p.draw(_ctx); }
+    if(_particles.length>0) _raf=requestAnimationFrame(loop);
+    else { _raf=null; removeCanvas(); }
+  }
+
+  function spawn(x, count, colors, velX, velY){
+    for(let i=0;i<count;i++) _particles.push(new Particle(x, colors, velX, velY));
+  }
+
+  window._confettiStop=function(){
+    if(_stopTimer){ clearInterval(_stopTimer); _stopTimer=null; }
+    _particles=[];
+  };
+
+  /* ゲーム中の勝利紙吹雪（横から） */
+  window.fireConfetti=function(winner){
+    if(!animOn()) return;
+    const P0=['#2E4B8F','#4866B0','#6E86C8','#A9BBE0'];
+    const P1=['#B14A33','#CE6147','#E0856E','#E6B3A4'];
+    const win=winner===0?P0:P1, lose=winner===0?P1:P0;
+    const colors=[...win,...win,...win,lose[0],lose[2],'#FFD700','#FFFFFF'];
+    ensureCanvas(); if(!_raf) _raf=requestAnimationFrame(loop);
+    spawn(0.05, 40, colors, 8, 6);
+    spawn(0.95, 40, colors, -8, 6);
+    setTimeout(()=>{ spawn(0.05,30,colors,7,5); spawn(0.95,30,colors,-7,5); },400);
+  };
+
+  /* 集計画面専用：上から降り注ぐ */
+  window.fireFinalConfetti=function(winner){
+    if(!animOn()) return;
+    if(_stopTimer){ clearInterval(_stopTimer); _stopTimer=null; }
+    const P0=['#2E4B8F','#4866B0','#6E86C8','#A9BBE0','#C5D3EE'];
+    const P1=['#B14A33','#CE6147','#E0856E','#E6B3A4','#F5D5CB'];
+    const GOLD=['#FFD700','#FFC200','#FFE566'];
+    const SILVER=['#E8E8E8','#C8C8C8'];
+    const winColors=winner===0?P0:P1, loseColors=winner===0?P1:P0;
+    const colors=[...winColors,...winColors,...winColors,...GOLD,...SILVER,loseColors[0],loseColors[2]];
+    ensureCanvas(); if(!_raf) _raf=requestAnimationFrame(loop);
+
+    // 開幕バースト
+    spawn(0.2, 60, colors, (Math.random()-0.5)*2, 5+Math.random()*4);
+    spawn(0.5, 60, colors, (Math.random()-0.5)*2, 5+Math.random()*4);
+    spawn(0.8, 60, colors, (Math.random()-0.5)*2, 5+Math.random()*4);
+    setTimeout(()=>{
+      spawn(0.35,50,colors,(Math.random()-0.5)*2,5+Math.random()*3);
+      spawn(0.65,50,colors,(Math.random()-0.5)*2,5+Math.random()*3);
+    },350);
+
+    // 3.5秒間断続的に降らせる
+    let elapsed=0;
+    _stopTimer=setInterval(()=>{
+      elapsed+=130;
+      const x=0.05+Math.random()*0.9;
+      spawn(x, 12, colors, (Math.random()-0.5)*1.5, 4+Math.random()*5);
+      if(elapsed>=3500){ clearInterval(_stopTimer); _stopTimer=null; }
+    },130);
+  };
+})();
+
+/* ============================================================
+   効果音（Web Audio・外部ファイルなし）
+   ============================================================ */
+let AC=null;
+function ensureAudio(){
+  if(AC) { if(AC.state==='suspended') AC.resume(); return; }
+  try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ AC=null; }
+}
+function blip(freq,dur,type='sine',vol=0.18,delay=0,glideTo=null){
+  if(!AC) return;
+  const t0=AC.currentTime+delay;
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.type=type; o.frequency.setValueAtTime(freq,t0);
+  if(glideTo) o.frequency.exponentialRampToValueAtTime(glideTo,t0+dur);
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(vol,t0+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+  o.connect(g).connect(AC.destination);
+  o.start(t0); o.stop(t0+dur+0.02);
+}
+function sfx(name){
+  if(!SETTINGS.sound) return;
+  ensureAudio(); if(!AC) return;
+  switch(name){
+    case 'place': blip(420,0.09,'triangle',0.2); blip(210,0.12,'sine',0.12,0.01); break;
+    case 'flip':  blip(520,0.07,'square',0.10); blip(700,0.09,'square',0.10,0.06); break;
+    case 'toss':  blip(300,0.28,'sine',0.03,0,760); break;
+    case 'card':  blip(660,0.07,'triangle',0.14); blip(880,0.07,'triangle',0.13,0.05); blip(1180,0.10,'triangle',0.12,0.10); break;
+    case 'click': blip(560,0.05,'sine',0.10); break;
+    case 'pick':  blip(740,0.06,'triangle',0.12); blip(990,0.08,'triangle',0.11,0.04); break;
+    case 'tosstick': blip(900,0.025,'square',0.0125); break;   // トス回転中の軽い刻み音
+    case 'win':   [523,659,784,1047].forEach((f,i)=>blip(f,0.5,'triangle',0.16,i*0.10)); break;
+    case 'draw':  blip(440,0.25,'sine',0.14); blip(440,0.25,'sine',0.12,0.18); break;
+    case 'end':   blip(392,0.4,'sine',0.14); blip(294,0.5,'sine',0.13,0.12); break;
+    case 'unlock':[330,494,659,988].forEach((f,i)=>blip(f,0.3,'square',0.12,i*0.07)); break;
+  }
+}
+
+/* ============================================================
+   描画
+   ============================================================ */
+const app=document.getElementById('app');
+function render(){
+  switch(S.phase){
+    case 'title': renderTitle(); break;
+    case 'matchmaking': renderMatchmaking(); break;
+    case 'toss': renderParentToss(); break;
+    case 'select': renderSelect(); break;
+    case 'play': renderPlay(); break;
+    case 'result': renderResult(); break;
+    case 'final': renderFinal(); break;
+  }
+}
+
+function renderTitle(){
+  const user = FB.getUser();
+  app.innerHTML=`
+    <div class="title-wrap">
+      <div class="title-mark">
+        <div class="title-coin front">表</div>
+        <div class="title-coin back">裏</div>
+      </div>
+      <div class="eyebrow">4×4 一対一ボードゲーム</div>
+      <h1 class="title">表裏陣取り</h1>
+      <p class="subtitle">コインの向きを操り、同じ向き3枚を揃える。全3ゲームの合計点で競う。</p>
+      ${user ? `
+        <div class="user-badge">
+          <span class="user-name">${user.name}</span>
+          <span class="user-id">#${user.id}</span>
+        </div>
+        <div class="title-actions">
+          <button class="btn" id="online-btn">オンライン対戦</button>
+          <button class="btn ghost" id="record-btn">戦績を見る</button>
+          <button class="btn ghost" id="rules">ルールを読む</button>
+          <button class="btn ghost" id="settings">詳細設定</button>
+          <button class="btn ghost sm" id="transfer-btn">引き継ぎ</button>
+        </div>
+      ` : `
+        <div class="title-actions">
+          <button class="btn" id="register-btn">名前を決めてはじめる</button>
+          <button class="btn ghost" id="transfer-btn">引き継ぎ（既存ユーザー）</button>
+          <button class="btn ghost" id="rules">ルールを読む</button>
+        </div>
+      `}
+    </div>`;
+  if(!user){
+    document.getElementById('register-btn').onclick=()=>{ ensureAudio(); sfx('click'); FB.showRegisterModal(); };
+    document.getElementById('transfer-btn').onclick=()=>{ ensureAudio(); sfx('click'); FB.showTransferModal(); };
+    document.getElementById('rules').onclick=showRules;
+    return;
+  }
+  document.getElementById('online-btn').onclick=()=>{ ensureAudio(); sfx('click'); FB.joinMatchQueue(); };
+  document.getElementById('record-btn').onclick=()=>{ ensureAudio(); sfx('click'); FB.showRecordModal(); };
+  document.getElementById('rules').onclick=showRules;
+  document.getElementById('settings').onclick=showSettings;
+  document.getElementById('transfer-btn').onclick=()=>{ ensureAudio(); sfx('click'); FB.showTransferModal(); };
+}
+
+/* ============================================================
+   マッチング待機画面
+   ============================================================ */
+function renderMatchmaking(){
+  app.innerHTML=`
+    <div class="title-wrap">
+      <div class="eyebrow">フリーマッチ</div>
+      <h1 class="title" style="font-size:28px">対戦相手を探しています…</h1>
+      <div class="thinking" style="margin:24px auto"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
+      <p class="subtitle" id="mm-status">待機中</p>
+      <div class="title-actions" style="margin-top:24px">
+        <button class="btn ghost" id="mm-cancel">キャンセル</button>
+      </div>
+    </div>`;
+  document.getElementById('mm-cancel').onclick=()=>{ ensureAudio(); sfx('click'); FB.leaveQueue(); newMatch(); render(); };
+}
+
+/* ============================================================
+   退出（オンライン）
+   ============================================================ */
+function askQuit(){
+  const bg=document.createElement('div'); bg.className='modal-bg';
+  bg.innerHTML=`<div class="modal">
+    <h3>対戦から退出しますか？</h3>
+    <p class="picker-note">相手に不戦勝が与えられ、あなたの負けとして記録されます。</p>
+    <div class="close-row">
+      <button class="btn ghost sm" id="quit-no">続ける</button>
+      <button class="btn" id="quit-yes">退出する</button>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+  document.getElementById('quit-no').onclick=()=>{ sfx('click'); bg.remove(); };
+  document.getElementById('quit-yes').onclick=()=>{ sfx('click'); bg.remove(); FB.surrender(); };
+  bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
+}
+
+function renderParentToss(){
+  app.innerHTML=`
+    <div class="title-wrap">
+      <div class="eyebrow">ゲーム 1 / 3</div>
+      <h1 class="title" style="font-size:28px">親を決めます</h1>
+      <p class="subtitle">コイントスで親（カード選択が先・先攻）を決定します。<br>親が先攻です。</p>
+      <button class="btn" id="tossbtn">コイントス</button>
+    </div>`;
+  document.getElementById('tossbtn').onclick=()=>{
+    doToss(()=>{
+      S.parent = Math.random()<.5?0:1;
+      toastMsg(`${pname(S.parent)} が親になりました`);
+      beginSelect();
+    });
+  };
+}
+
+function renderSelect(){
+  const step=S.sel.step;
+  const who=step<SELECT_COUNT?S.sel.order[step]:null;
+  const orderPips=S.sel.order.map((o,i)=>`<div class="po ${o===0?'p0':'p1'} ${i===step?'now':''}"></div>`).join('');
+  const cards=ALL_CARDS.map(id=>{
+    const taken=!S.sel.available.has(id);
+    let owner=null;
+    if(taken){ owner = S.hands[0].includes(id)?0:1; }
+    const pickable = !taken && who!==null && isHuman(who);
+    return `<div class="gcard ${pickable?'pick':''} ${taken?'taken':''}" data-card="${id}">
+        ${taken?`<div class="owner-flag ${owner===0?'p0':'p1'}">${pname(owner)}</div>`:''}
+        <div class="gname">${CARD_INFO[id].name}</div>
+        <div class="gdesc">${CARD_INFO[id].desc}</div>
+      </div>`;
+  }).join('');
+  const status = (who!==null && isHuman(who))
+    ? `<b>${pname(who)}</b> の番です。取るカードを選んでください`
+    : `<b>${pname(S.sel.order[S.sel.step])}</b> が選んでいます…`;
+  app.innerHTML=`
+    <div class="topbar">
+      <span class="game-counter">ゲーム ${S.gameIndex+1} / 3</span>
+      <div class="totals"><button class="link" id="ruleslink">ルール</button><button class="iconbtn" id="setbtn" title="詳細設定" aria-label="詳細設定">⚙</button></div>
+    </div>
+    <div class="select-wrap">
+      <div class="select-head">
+        <div class="eyebrow">カード選択　親：${pname(S.parent)}（先に選び、先攻）</div>
+        <h2>カードを3枚ずつ分ける</h2>
+        <div class="select-status">${status}</div>
+        <div class="pick-order">${orderPips}</div>
+      </div>
+      <div class="card-grid">${cards}</div>
+    </div>`;
+  document.getElementById('ruleslink').onclick=showRules;
+  document.getElementById('setbtn').onclick=showSettings;
+  if(who!==null && isHuman(who)){
+    app.querySelectorAll('.gcard.pick').forEach(el=>{
+      el.onclick=()=>pickCard(el.dataset.card);
+    });
+  }
+}
+
+function renderPlay(){
+  const setCells=winningCells(S.board);
+  const win=S.over?setCells:new Set();
+  // 盤面
+  let cellsHtml='';
+  for(let i=0;i<16;i++){
+    const c=S.board[i];
+    let cls='cell';
+    const pd=S.pending;
+    if(isHuman(S.current)&&!S.busy&&pd){
+      const me=S.current, opp=me^1;
+      const isMine=c&&(c.owner===me||c.shared);
+      const sel=` selectable-p${me}`;
+      if(pd.type==='placeCell'&&!c) cls+=sel;
+      if(pd.type==='flip'&&isMine&&c.type!=='puppet'&&!c.locked) cls+=sel;
+      if(pd.type==='nurikeshi'&&c&&c.owner===opp&&!c.locked&&c.type!=='puppet'&&!c.shared) cls+=' target';
+      if(pd.type==='uragaeshi'&&c&&c.owner===opp&&!c.locked&&c.type!=='puppet') cls+=' target';
+      if(pd.type==='kagikake'&&isMine&&c.type!=='puppet'&&!c.locked) cls+=sel;
+      if(pd.type==='moveFrom'&&isMine&&c.type!=='puppet'&&!c.locked&&neighbors8(i).some(n=>!S.board[n])) cls+=sel;
+      if(pd.type==='moveTo'&&!c&&neighbors8(pd.from).includes(i)) cls+=sel;
+    }
+    if(win.has(i)) cls+=' win';
+    else if(!S.over && setCells.has(i)) cls+=' setdone';
+    let coin='';
+    if(c){
+      if(c.type==='puppet'){
+        coin=`<div class="coin puppet${c.locked?' locked':''}" title="木偶コイン（両者のコイン・点数なし）">偶</div>`;
+      } else {
+        const ownerCls = c.shared ? 'shared' : 'p'+c.owner;
+        const faceCls = c.face===FRONT?'front':'back';
+        coin=`<div class="coin ${ownerCls} ${faceCls}${c.locked?' locked':''}"${c.shared?' title="共有コイン（両者のコイン）"':''}${c.locked?' title="鍵掛け（効果を受けない）"':''}>${faceLabel(c.face)}</div>`;
+      }
+    }
+    cellsHtml+=`<div class="${cls}" data-cell="${i}">${coin}</div>`;
+  }
+  // パネル
+  const panel=(p)=>{
+    const isDesig=S.designate[p];
+    const interactive = isHuman(p) && S.current===p; // この手番で操作する人間
+    const lockBudget={};  // 同一IDのロック枚数を消費しながら割り当て
+    (S.cardLocks||[]).forEach(l=>{ if(l.owner===p) lockBudget[l.card]=(lockBudget[l.card]||0)+1; });
+    const hand=S.hands[p].map(id=>{
+      const tip=CARD_INFO[id].name+'：'+CARD_INFO[id].desc;
+      const isLocked = lockBudget[id]>0;
+      if(isLocked) lockBudget[id]--;
+      if(isLocked){
+        return `<span class="card-chip locked-card" title="裏返しでロック中：${tip}">🔒${CARD_INFO[id].name}</span>`;
+      }
+      if(interactive){
+        const usable=S.phase==='play'&&!S.busy&&!S.pending&&cardUsable(p,id);
+        const dead=S.phase==='play'&&!S.pending&&!usable;
+        return `<button class="card-chip ${usable?'usable':''} ${dead?'dead':''}" data-usecard="${id}" title="${tip}">${CARD_INFO[id].name}</button>`;
+      }
+      return `<span class="card-chip" title="${tip}">${CARD_INFO[id].name}</span>`;
+    }).join('') || '<span class="pmeta">なし</span>';
+    const sets=setCounts(S.board)[p];
+    const pips=[0,1,2].map(i=>`<span class="setpip ${i<sets?'on p'+p:''}"></span>`).join('');
+    return `<div class="panel ${S.current===p?'active a'+p:''}">
+      <div class="panel-head">
+        <span class="pname"><span class="dot p${p}"></span>${pname(p)}</span>
+        ${S.parent===p?'<span class="badge oya">親・先攻</span>':'<span class="badge">後攻</span>'}
+      </div>
+      <div class="pmeta">残りコイン ${S.coins[p]} 枚</div>
+      <div class="setrow"><span class="setlabel">3組まで</span>${pips}</div>
+      <div class="hand">${hand}</div>
+      ${isDesig?`<div class="desig">指定中：次の配置は${faceLabel(isDesig)}</div>`:''}
+    </div>`;
+  };
+
+  // アクションバー
+  let actionInner='';
+  if(S.busy){
+    actionInner=`<div class="thinking"><span class="pip"></span>処理中…</div>`;
+  } else if(!isHuman(S.current)){
+    actionInner=`<div class="thinking"><span class="pip"></span>${pname(S.current)} の手番です…</div>`;
+  } else if(S.pending){
+    actionInner=renderPending();
+  } else {
+    const canPlace=S.coins[S.current]>0&&emptyCells(S.board).length>0;
+    const canFlip=ownCoins(S.board,S.current).length>0;
+    const flipOnCD=S.flipCooldown&&S.flipCooldown[S.current];
+    actionInner=`
+      <div class="instruction"><span class="hl p${S.current}">${pname(S.current)}</span> の手番。行動を1つ選んでください。</div>
+      <div class="acts">
+        <button class="btn" id="act-place" ${canPlace?'':'disabled'}>コインを置く</button>
+        <button class="btn ghost" id="act-flip" ${canFlip&&!flipOnCD?'':'disabled'} title="${flipOnCD?'前のターンに使用済み（1ターンのクールダウン中）':''}">裏返す${flipOnCD?' ⏳':''}</button>
+      </div>
+      <div class="pmeta" style="margin-top:8px">カードは下のパネルの自分の手札から使用できます。</div>`;
+  }
+
+  const turnText = isHuman(S.current) ? 'あなたの手番' : `${pname(S.current)} の手番`;
+  app.innerHTML=`
+    <div class="topbar">
+      <span class="game-counter">ゲーム ${S.gameIndex+1} / 3</span>
+      <div class="totals">
+        <span class="tot"><span class="dot p0"></span>${pname(0)} ${S.totals[0]}</span>
+        <span class="tot"><span class="dot p1"></span>${pname(1)} ${S.totals[1]}</span>
+        <button class="link" id="ruleslink">ルール</button>
+        <button class="iconbtn" id="setbtn" title="詳細設定" aria-label="詳細設定">⚙</button>
+      </div>
+    </div>
+    <div class="board-stage">
+      <div class="turn-banner p${S.current}"><span class="tb-dot"></span>${turnText}</div>
+      <div class="board turn-p${S.current}">${cellsHtml}</div>
+      <div class="actionbar">
+        ${S.lastMove?`<div class="lastmove">直前の手：${S.lastMove}</div>`:''}
+        ${actionInner}
+      </div>
+      <div class="panels">${panel(0)}${panel(1)}</div>
+      <div class="surrender-row">
+        <button class="btn ghost sm" id="surrender-btn">投降を申し出る</button>
+      </div>
+    </div>`;
+
+  document.getElementById('ruleslink').onclick=showRules;
+  document.getElementById('setbtn').onclick=showSettings;
+  // 盤面クリック
+  app.querySelectorAll('.cell').forEach(el=>{
+    el.onclick=()=>clickCell(parseInt(el.dataset.cell));
+  });
+  // 行動ボタン
+  const pb=document.getElementById('act-place'); if(pb) pb.onclick=()=>humanAction('place');
+  const fb=document.getElementById('act-flip'); if(fb) fb.onclick=()=>humanAction('flip');
+  // 投降ボタン（対人モードのみ）
+  const surrb=document.getElementById('surrender-btn'); if(surrb) surrb.onclick=()=>{ if(isHuman(S.current)) askSurrender(S.current); };
+  // カード使用
+  app.querySelectorAll('[data-usecard]').forEach(el=>{
+    el.onclick=()=>clickCard(el.dataset.usecard);
+  });
+  // 指定の選択ボタン
+  const sf=document.getElementById('desig-front'); if(sf) sf.onclick=()=>chooseDesignate(FRONT);
+  const sb=document.getElementById('desig-back'); if(sb) sb.onclick=()=>chooseDesignate(BACK);
+  const cancel=document.getElementById('cancel-pending'); if(cancel) cancel.onclick=cancelPending;
+  const cancelMv=document.getElementById('cancel-movefrom'); if(cancelMv) cancelMv.onclick=cancelMoveFrom;
+  // メニュー外（盤面ステージの空白）クリックでキャンセル：カード選択pending中のみ
+  const stage=app.querySelector('.board-stage');
+  if(stage && S.pending && isHuman(S.current) && isCancelablePending(S.pending)){
+    stage.addEventListener('click',e=>{
+      // セル自体のクリックは各セルのハンドラに任せる。ステージ余白のみ反応。
+      if(e.target===stage) cancelPending();
+    });
+  }
+  // コイン設置のドット散り演出
+  if(S.placeFx){
+    const fx=S.placeFx; S.placeFx=null;
+    const cellEl=app.querySelector(`.cell[data-cell="${fx.cell}"]`);
+    if(cellEl) spawnPlaceDots(cellEl, fx.player);
+  }
+}
+// 設置マスに色付きフェードアウト演出を表示
+function spawnPlaceDots(cellEl, player){
+  if(!animOn()) return;
+  const color = player===0?'var(--p0)':'var(--p1)';
+  const flash=document.createElement('div'); flash.className='cell-place-flash';
+  flash.style.background=color;
+  cellEl.appendChild(flash);
+  setTimeout(()=>{ if(flash.parentNode) flash.remove(); }, 750);
+}
+// キャンセル可能な（カード由来の）pendingか
+function isCancelablePending(pd){
+  return pd && (pd.card || pd.type==='flip' || pd.type==='moveTo' || pd.type==='shitei'
+    || ['nurikeshi','uragaeshi','kagikake','moveFrom'].includes(pd.type));
+}
+
+function renderPending(){
+  const pd=S.pending;
+  const cancelBtn=`<div class="acts"><button class="btn ghost sm" id="cancel-pending">キャンセル</button></div>`;
+  if(pd.type==='placeCell')
+    return `<div class="instruction">${pd.designated?'指定により ':''}<span class="hl">${faceLabel(pd.face)}</span> を置きます。盤面の空きマスを選んでください。</div>`;
+  if(pd.type==='flip')
+    return `<div class="instruction">裏返す<span class="hl">自分のコイン</span>を盤面から選んでください。</div>${cancelBtn}`;
+  if(pd.type==='nurikeshi')
+    return `<div class="instruction">色を抜く<span class="hl">相手のコイン</span>を選んでください。両者のコインになります。</div>${cancelBtn}`;
+  if(pd.type==='uragaeshi')
+    return `<div class="instruction">裏返す<span class="hl">相手のコイン</span>を選んでください。次のあなたの手番までロックされます。</div>${cancelBtn}`;
+  if(pd.type==='kagikake')
+    return `<div class="instruction">鍵をかける<span class="hl">自分のコイン</span>を選んでください。効果を受けなくなります。</div>${cancelBtn}`;
+  if(pd.type==='moveFrom')
+    return `<div class="instruction">移動させる<span class="hl">自分のコイン</span>を選んでください。</div>${cancelBtn}`;
+  if(pd.type==='moveTo')
+    return `<div class="instruction">移動先の<span class="hl">空きマス</span>（縦横斜め1マス）を選んでください。</div>
+      <div class="acts"><button class="btn ghost sm" id="cancel-movefrom">コインを選び直す</button><button class="btn ghost sm" id="cancel-pending">キャンセル</button></div>`;
+  if(pd.type==='shitei')
+    return `<div class="instruction">次の相手と自分のコイントス結果にする向きを宣言してください。</div>
+      <div class="choice-row">
+        <button class="btn" id="desig-front">表を指定</button>
+        <button class="btn ghost" id="desig-back">裏を指定</button>
+      </div>${cancelBtn}`;
+  return '';
+}
+function cancelPending(){
+  // 選択前のキャンセル：カードは消費していないので、そのまま手番継続（何も起きない）
+  if(!S.pending) return;
+  // 'flip' と 'placeCell'(非指定) は通常アクションなので取り消すだけ。カードpendingも未消費なので戻すだけ。
+  const designated = (S.pending.type==='placeCell' && S.pending.designated);
+  S.pending=null;
+  if(designated){
+    // 指定で固定された配置を取り消した場合でも、designateは保持（指定の効果は既に発動済み）
+  }
+  sfx('click');
+  render();
+}
+// 移動：移動元の選び直し（moveTo→moveFrom）
+function cancelMoveFrom(){
+  if(S.pending&&S.pending.type==='moveTo'){ S.pending={type:'moveFrom', card:'ido'}; sfx('click'); render(); }
+}
+
+function renderResult(){
+  const r=S.lastBreakdown;
+  const last=S.gameIndex>=2;
+  const row=(p)=>`<div class="sb-row">
+      <div class="sb-name"><span class="dot p${p}"></span>${pname(p)} ${S.parent===p?'<span class="badge oya" style="margin-left:4px">親</span>':''}</div>
+      <div class="num breakdown">3枚揃い ${r.board[p]} ／ カード ${r.cards[p]}</div>
+      <div class="num"><b>${r.score[p]}</b></div>
+    </div>`;
+  app.innerHTML=`
+    <div class="topbar"><span class="game-counter">ゲーム ${S.gameIndex+1} / 3 終了</span></div>
+    <div class="result-wrap">
+      <div class="eyebrow">このゲームの結果</div>
+      <h2>${r.score[0]===r.score[1]?'引き分け':pname(r.score[0]>r.score[1]?0:1)+' の勝ち'}</h2>
+      <div class="result-board-wrap">${resultBoardSVG(r)}</div>
+      <div class="result-legend">
+        <span><span class="lg-line p0"></span>${pname(0)}の揃い</span>
+        <span><span class="lg-line p1"></span>${pname(1)}の揃い</span>
+        <span class="lg-note">3連=3点 ／ 4連=6点</span>
+      </div>
+      <div class="scoreboard">
+        <div class="sb-row head"><div>プレイヤー</div><div class="num">内訳</div><div class="num">得点</div></div>
+        ${row(0)}${row(1)}
+        <div class="sb-row subtotal"><div>このゲーム</div><div class="num">${pname(0)} ${r.score[0]}</div><div class="num">${pname(1)} ${r.score[1]}</div></div>
+        <div class="sb-row total"><div>累計</div><div class="num">${pname(0)} ${S.totals[0]}</div><div class="num">${pname(1)} ${S.totals[1]}</div></div>
+      </div>
+      <button class="btn" id="next">${last?'最終結果を見る':'次のゲームへ'}</button>
+      <div class="pmeta">次の親：${last?'—':pname(computeNextParent())}</div>
+    </div>`;
+  document.getElementById('next').onclick=()=>{ sfx('click'); nextGame(); };
+}
+// 終了盤面＋得点ラインのSVGを生成
+function resultBoardSVG(rec){
+  const board=rec.snapshot||S.board, runs=rec.runs||[];
+  const N=4, G=78, PAD=26, R=26;             // セル間隔・余白・コイン半径
+  const W=PAD*2+G*(N-1), H=W;
+  const cx=i=>PAD+(i%4)*G, cy=i=>PAD+Math.floor(i/4)*G;
+  // このゲームの勝者（引き分けはnull）
+  const gameWinner = rec.score[0]===rec.score[1] ? null : (rec.score[0]>rec.score[1]?0:1);
+  const WIN_FILL_0='#E7ECF6', WIN_FILL_1='#F7E9E4';
+  // 盤面グリッド枠＋勝者マス塗りつぶし
+  let cells='';
+  for(let i=0;i<16;i++){
+    const c=board[i];
+    let cellFill='none';
+    if(gameWinner!==null && c && (c.owner===gameWinner || c.shared)){
+      cellFill = gameWinner===0 ? WIN_FILL_0 : WIN_FILL_1;
+    }
+    cells+=`<rect x="${cx(i)-G/2}" y="${cy(i)-G/2}" width="${G}" height="${G}" fill="${cellFill}" stroke="var(--line)" stroke-width="1"/>`;
+  }
+  // コイン
+  let coins='';
+  const COL0='#2E4B8F', COL1='#B14A33', COL_SHARED='#7A4F9E';
+  for(let i=0;i<16;i++){ const c=board[i]; if(!c) continue;
+    const isFront = c.face===FRONT;
+    const faceTxt = isFront?'表':'裏';
+    let circleFill, circleStroke, strokeW, textCol;
+    if(c.type==='puppet'){
+      circleFill='#EDEBE4'; circleStroke='#B6B5AD'; strokeW=2; textCol='#8C8B83';
+    } else {
+      const baseCol = c.shared ? COL_SHARED : (c.owner===0 ? COL0 : COL1);
+      if(isFront){
+        // 表：塗りつぶし・白文字
+        circleFill=baseCol; circleStroke=c.locked?'#C9A227':'rgba(0,0,0,.15)'; strokeW=c.locked?3:1.5; textCol='#fff';
+      } else {
+        // 裏：白地・色ボーダー・色文字
+        circleFill='#fff'; circleStroke=c.locked?'#C9A227':baseCol; strokeW=c.locked?3:2.5; textCol=baseCol;
+      }
+    }
+    const lockRing = c.locked ? `<circle cx="${cx(i)}" cy="${cy(i)}" r="${R+5}" fill="none" stroke="#C9A227" stroke-width="2" opacity="0.7"/>` : '';
+    coins+=`<g>
+      ${lockRing}
+      <circle cx="${cx(i)}" cy="${cy(i)}" r="${R}" fill="${circleFill}" stroke="${circleStroke}" stroke-width="${strokeW}"/>
+      <text x="${cx(i)}" y="${cy(i)+6}" text-anchor="middle" font-size="15" fill="${textCol}" font-family="serif" font-weight="700">${faceTxt}</text>
+    </g>`;
+  }
+  // 得点ライン（連の端から端へ太線）。プレイヤー色。重なりは少しずらす。
+  let lines='';
+  runs.forEach((run,idx)=>{
+    const a=run.cells[0], b=run.cells[run.cells.length-1];
+    const col=run.player===0?'var(--p0)':'var(--p1)';
+    // 複数ラインが同じコインを通る場合に見えるよう、垂直方向に微小オフセット
+    const off=(run.player===0?-1:1)*4;
+    lines+=`<line x1="${cx(a)}" y1="${cy(a)+off}" x2="${cx(b)}" y2="${cy(b)+off}"
+        stroke="${col}" stroke-width="7" stroke-linecap="round" opacity="0.78"/>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" class="result-svg" xmlns="http://www.w3.org/2000/svg">
+    ${cells}${lines}${coins}
+  </svg>`;
+}
+function computeNextParent(){
+  const prev=S.lastBreakdown;
+  if(prev.score[0]===prev.score[1]) return prev.parent===0?1:0;
+  return prev.score[0]<prev.score[1]?0:1;
+}
+
+function renderFinal(){
+  const t=S.totals;
+  const winner = t[0]===t[1] ? null : (t[0]>t[1]?0:1);
+  const perGame=S.gameLog.map((g,i)=>`<div class="sb-row">
+      <div class="sb-name">ゲーム ${i+1}</div>
+      <div class="num">${g.score[0]}</div>
+      <div class="num">${g.score[1]}</div>
+    </div>`).join('');
+  app.innerHTML=`
+    <div class="result-wrap" style="margin-top:24px">
+      <div class="eyebrow">全3ゲーム終了</div>
+      <h2>${winner===null?'引き分け':pname(winner)+' の勝利'}</h2>
+      <div class="scoreboard">
+        <div class="sb-row head"><div></div><div class="num">${pname(0)}</div><div class="num">${pname(1)}</div></div>
+        ${perGame}
+        <div class="sb-row total"><div>合計</div><div class="num">${t[0]}</div><div class="num">${t[1]}</div></div>
+      </div>
+      <div class="title-actions">
+        <button class="btn" id="title-btn">タイトルへ戻る</button>
+        <button class="btn ghost" id="rules">ルール</button>
+      </div>
+    </div>`;
+  sfx(winner===null?'draw':'win');
+  if(winner!==null){ setTimeout(()=>fireFinalConfetti(winner), 150); }
+  // 戦績をFirestoreに書き込む（myRoleが確定している場合のみ）
+  FB.saveMatchResult(winner);
+  document.getElementById('title-btn').onclick=()=>{ sfx('click'); FB.leaveRoom(); newMatch(); render(); };
+  document.getElementById('rules').onclick=showRules;
+}
+
+/* ============================================================
+   対人モード：プレイヤー名入力
+   ============================================================ */
+
+/* ============================================================
+   投降
+   ============================================================ */
+function askSurrender(player){
+  if(S.phase!=='play') return;
+  const bg=document.createElement('div'); bg.className='modal-bg';
+  bg.innerHTML=`<div class="modal">
+    <h3>投降しますか？</h3>
+    <p class="picker-note">投降すると相手の勝利となり、負けとして記録されます。</p>
+    <div class="close-row">
+      <button class="btn ghost sm" id="surr-cancel">キャンセル</button>
+      <button class="btn" id="surr-ok">投降する</button>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+  document.getElementById('surr-ok').onclick=()=>{ sfx('click'); bg.remove(); FB.surrender(); };
+  document.getElementById('surr-cancel').onclick=()=>{ sfx('click'); bg.remove(); };
+  bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
+}
+
+/* ============================================================
+   詳細設定モーダル
+   ============================================================ */
+function showSettings(){
+  ensureAudio();
+  // ゲーム進行中（CPU対局が始まっている）はCPU設定を変更不可にする
+  const seg=(name,opts,cur,locked)=>opts.map(o=>
+    `<button class="seg ${cur===o.v?'active':''} ${locked?'locked':''}" ${locked?'disabled':''} data-set="${name}" data-val="${o.v}">${o.t}</button>`).join('');
+  const bg=document.createElement('div'); bg.className='modal-bg';
+  bg.innerHTML=`<div class="modal">
+    <h3>詳細設定</h3>
+    <div class="set-row"><span class="set-label">効果音</span>
+      <div class="mode-seg sm">${seg('sound',[{v:true,t:'ON'},{v:false,t:'OFF'}],SETTINGS.sound)}</div></div>
+    <div class="set-row"><span class="set-label">演出（アニメ）</span>
+      <div class="mode-seg sm">${seg('anim',[{v:true,t:'ON'},{v:false,t:'OFF'}],SETTINGS.anim)}</div></div>
+    <div class="set-row"><span class="set-label">シェイク（揺れ演出）</span>
+      <div class="mode-seg sm">${seg('shake',[{v:true,t:'ON'},{v:false,t:'OFF'}],SETTINGS.shake)}</div></div>
+    <div class="close-row"><button class="btn" id="closeset">閉じる</button></div>
+  </div>`;
+  const close=()=>{ bg.remove(); if(S.phase==='play'||S.phase==='select') render(); };
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  document.body.appendChild(bg);
+  bg.querySelectorAll('[data-set]:not([disabled])').forEach(el=>{
+    el.onclick=()=>{
+      const k=el.dataset.set; let v=el.dataset.val;
+      if(v==='true') v=true; else if(v==='false') v=false;
+      SETTINGS[k]=v;
+      sfx('click'); bg.remove(); showSettings();
+    };
+  });
+  document.getElementById('closeset').onclick=()=>{ sfx('click'); close(); };
+}
+
+/* ============================================================
+   ルールモーダル
+   ============================================================ */
+function showRules(){
+  const bg=document.createElement('div'); bg.className='modal-bg';
+  bg.innerHTML=`<div class="modal">
+    <h3>表裏陣取り ルール</h3>
+    <p>4×4の盤面に、表・裏のあるコインを置き合う一対一ゲーム。<b>同じ向き・同じ持ち主のコインを縦横斜めに3枚揃える</b>ことを狙います。全3ゲームの合計点で勝敗を決めます。</p>
+    <h4>手番の行動（1つ選ぶ）</h4>
+    <ul>
+      <li><b>コインを置く</b>：コイントスで出た面のまま空きマスへ。『指定』の効果を受けている場合は、トスせず指定された向きで置く。</li>
+      <li><b>裏返す</b>：盤上の自分のコイン1枚の向きを変える。<b>使用後1ターンは再使用できない（クールダウン）。</b></li>
+      <li><b>カードを使う</b>：手札のカード1枚の効果を使う。</li>
+    </ul>
+    <h4>カード（9種を分け合う）</h4>
+    <ul>
+      <li><b>指定</b>：次の相手と自分のコイントス結果を、選んだ向きに固定。</li>
+      <li><b>色抜き</b>：相手コイン1枚の色をなくし、両者のコインにする（常に自分のコイン扱い）。</li>
+      <li><b>革命</b>：盤上の全コインを表にする。</li>
+      <li><b>移動</b>：自分のコインを縦横斜めどちらかに1マス、空きマスへ。</li>
+      <li><b>鍵掛け</b>：自分のコイン1枚に鍵をかける。効果を受けず状態が変化しない。</li>
+      <li><b>複製</b>：自分のカード1枚を複製し、手札に同じカードを増やす。</li>
+      <li><b>裏返し</b>：相手のコイン1枚を裏返す。次の自分の手番までロックされ状態が変化しない。</li>
+      <li><b>停滞</b>：相手の未使用カード1枚を、自分の2回目の手番開始まで使用不可にする。</li>
+      <li><b>中断</b>：どちらかが一列以上揃っている時のみ使用可。自分の全カードを捨て、即終了。</li>
+    </ul>
+    <h4>終了条件</h4>
+    <ul>
+      <li>いずれかのプレイヤーが3組（3枚揃い×3）を達成した時点。</li>
+      <li>どちらかが8枚目のコインを置いた時点。</li>
+      <li>『中断』が使われた時点。</li>
+    </ul>
+    <h4>得点</h4>
+    <ul>
+      <li>同じ向き3枚連続＝3点（4枚連続は6点）。複数ラインは別々に加算。</li>
+      <li>未使用カード1枚につき1点（『中断』使用者は0点）。</li>
+    </ul>
+    <div class="close-row"><button class="btn" id="closemodal">閉じる</button></div>
+  </div>`;
+  bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
+  document.body.appendChild(bg);
+  document.getElementById('closemodal').onclick=()=>bg.remove();
+}
+
+/* ============================================================
+   起動
+   ============================================================ */
+newMatch();
+render();
+</script>
+
+<!-- ========== FIREBASE ========== -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.8.1/firebase-app.js';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch }
+  from 'https://www.gstatic.com/firebasejs/11.8.1/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAUSsFgUTVwVn-r2n5iFnDvKOwCjvdc15w",
+  authDomain: "omoteuryonmoku.firebaseapp.com",
+  projectId: "omoteuryonmoku",
+  storageBucket: "omoteuryonmoku.firebasestorage.app",
+  messagingSenderId: "910620042876",
+  appId: "1:910620042876:web:6d74a84dc87ea201474bf9"
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+
+/* ---- ユーザー管理 ---- */
+const LS_USER = 'omote_user'; // localStorageキー
+
+function loadLocalUser(){
+  try { return JSON.parse(localStorage.getItem(LS_USER)); } catch{ return null; }
+}
+function saveLocalUser(u){ localStorage.setItem(LS_USER, JSON.stringify(u)); }
+
+async function generateId(name){
+  for(let i=0;i<20;i++){
+    const id = String(Math.floor(Math.random()*900)+100);
+    const docId = `${name}_${id}`;
+    const snap = await getDoc(doc(db,'users', docId));
+    if(!snap.exists()) return {id, docId};
+  }
+  const id = String(Math.floor(Math.random()*9000)+1000);
+  return {id, docId:`${name}_${id}`};
+}
+
+async function createUser(name){
+  const {id, docId} = await generateId(name);
+  const user = {name, id, docId, wins:0, losses:0, draws:0, streak:0, history:[]};
+  await setDoc(doc(db,'users', docId), {
+    name, id, wins:0, losses:0, draws:0, streak:0, history:[], createdAt:serverTimestamp()
+  });
+  saveLocalUser(user);
+  return user;
+}
+
+async function transferUser(name, id){
+  // name+id でユーザーを検索（Firestoreのidフィールドで一致するものを探す）
+  // ※ユーザー数が少ないためgetで引ける設計
+  // docIdは name_id 形式ではないためリスト取得不可 → users コレクションを docId で直接引く
+  // 代わりに: docId = name + '_' + id で保存し直す形に統一する
+  // 実装: まずローカルのdocIdを試み、なければ名前とIDの組み合わせで検索
+  const candidateDocId = `${name}_${id}`;
+  const snap = await getDoc(doc(db,'users', candidateDocId));
+  if(snap.exists()){
+    const data = snap.data();
+    const user = {...data, docId: candidateDocId};
+    saveLocalUser(user);
+    return user;
+  }
+  return null;
+}
+
+/* ---- マッチング ---- */
+let _roomUnsub = null;
+let _queueUnsub = null;
+let _queueTimeout = null;
+
+async function joinMatchQueue(){
+  const user = loadLocalUser();
+  if(!user){ toastMsg('先にユーザー登録が必要です'); return; }
+  S.phase = 'matchmaking'; render();
+
+  const queueRef = doc(db, 'matchQueue', 'waiting');
+  const snap = await getDoc(queueRef);
+
+  if(snap.exists() && snap.data().userId !== user.docId){
+    // 相手が待機中 → マッチング成立
+    const opponent = snap.data();
+    await deleteDoc(queueRef); // キューを空に
+    await _createRoom(opponent, user); // opponentがp0、自分がp1
+  } else {
+    // 誰もいない or 自分が既に待機中 → 自分がキューに入る
+    await setDoc(queueRef, {
+      userId: user.docId,
+      userName: user.name,
+      joinedAt: serverTimestamp()
+    });
+    // 相手が入ってきたらマッチング
+    _queueUnsub = onSnapshot(queueRef, async(snap2)=>{
+      if(!snap2.exists()){
+        // 自分のエントリが消えた = 相手がマッチングしてルーム作成済み
+        if(_queueUnsub){ _queueUnsub(); _queueUnsub=null; }
+        clearTimeout(_queueTimeout);
+        // ルームを探す（自分がp1として招待されているはず）
+        // 少し待ってからルームを探す
+        setTimeout(()=>_findMyRoom(user), 500);
+      }
+    });
+    // 60秒タイムアウト
+    _queueTimeout = setTimeout(()=>{
+      if(_queueUnsub){ _queueUnsub(); _queueUnsub=null; }
+      deleteDoc(queueRef);
+      toastMsg('タイムアウト：対戦相手が見つかりませんでした');
+      newMatch(); render();
+    }, 60000);
+    const mmStatus = document.getElementById('mm-status');
+    if(mmStatus) mmStatus.textContent = '対戦相手を待っています…';
+  }
+}
+
+async function _findMyRoom(user){
+  // 自分がp1として招待されたルームを探す
+  // roomsコレクションに p1.userId を問い合わせ
+  // （数が少ないため、直近作成ルームをIDで引く設計にする）
+  // 実装: joinQueueの際にself.waitingRoomId をFirestoreに書いてもらう形に変更
+  // 簡易実装：待機ドキュメントにroomIdを書き込む方式
+  const waitingSnap = await getDoc(doc(db, 'matchQueue', 'pending_' + user.docId));
+  if(waitingSnap.exists()){
+    const {roomId} = waitingSnap.data();
+    await deleteDoc(doc(db, 'matchQueue', 'pending_' + user.docId));
+    _subscribeRoom(roomId, 1);
+  }
+}
+
+async function _createRoom(p0, p1){
+  // p0=待機していたプレイヤー, p1=後からマッチしたプレイヤー(自分)
+  const roomId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  const parent = Math.random()<0.5 ? 0 : 1; // 先攻をランダム決定
+
+  await setDoc(doc(db, 'rooms', roomId), {
+    p0: {userId: p0.userId, userName: p0.userName},
+    p1: {userId: p1.docId, userName: p1.name},
+    status: 'selecting',
+    parent,
+    gameIndex: 0,
+    totals: [0,0],
+    gameLog: [],
+    lastAction: null,
+    lastActionId: null,
+    createdAt: serverTimestamp()
+  });
+
+  // p0への通知（matchQueue/pending_{p0Id}に書き込む）
+  await setDoc(doc(db, 'matchQueue', 'pending_' + p0.userId), {roomId});
+
+  // 自分(p1)はルームを購読開始
+  _subscribeRoom(roomId, 1);
+}
+
+async function leaveQueue(){
+  if(_queueUnsub){ _queueUnsub(); _queueUnsub=null; }
+  clearTimeout(_queueTimeout);
+  try { await deleteDoc(doc(db,'matchQueue','waiting')); } catch(e){}
+}
+
+/* ---- ルーム購読・受信 ---- */
+function _subscribeRoom(roomId, myRole){
+  const user = loadLocalUser();
+  S.roomId = roomId;
+  S.myRole = myRole;
+  // pnamesをroomデータから設定するため、まず初期データ取得
+  getDoc(doc(db,'rooms',roomId)).then(snap=>{
+    if(!snap.exists()) return;
+    const d = snap.data();
+    S.pnames[0] = d.p0.userName;
+    S.pnames[1] = d.p1.userName;
+    // ゲーム開始
+    S.gameIndex=0; S.totals=[0,0]; S.gameLog=[]; S.lastMove=null;
+    startGame();
+  });
+
+  _roomUnsub = onSnapshot(doc(db,'rooms',roomId), snap=>{
+    if(!snap.exists()) return;
+    const d = snap.data();
+    // 自分が送ったアクションは無視
+    if(!d.lastAction || d.lastActionId === S.lastActionId) return;
+    S.lastActionId = d.lastActionId;
+    _receiveAction(d.lastAction);
+  });
+}
+
+function leaveRoom(){
+  if(_roomUnsub){ _roomUnsub(); _roomUnsub=null; }
+  S.roomId=null; S.myRole=null;
+}
+
+/* ---- アクション送信 ---- */
+async function sendAction(action){
+  if(!S.roomId) return;
+  const actionId = crypto.randomUUID();
+  S.lastActionId = actionId; // 自分が送ったものとしてマーク（受信時にスキップ）
+  try {
+    await updateDoc(doc(db,'rooms', S.roomId), {
+      lastAction: action,
+      lastActionId: actionId
+    });
+  } catch(e){
+    toastMsg('通信エラーが発生しました');
+    console.error(e);
+  }
+}
+
+/* ---- アクション受信・実行 ---- */
+function _receiveAction(action){
+  const opp = S.myRole ^ 1; // 相手のrole
+  switch(action.type){
+
+    case 'tossResult':
+      // 相手がトスを行った → 結果を受け取ってアニメ再生
+      doToss(face=>{
+        S.pending={type:'placeCell', face};
+        render();
+      }, action.face);
+      break;
+
+    case 'place':
+      placeCoin(opp, action.cell, action.face);
+      if(S.coins[opp]===0) S._justPlacedEighth=true;
+      setLastMove(`${pname(opp)}：${faceLabel(action.face)}を配置`);
+      S.pending=null;
+      afterAction();
+      break;
+
+    case 'flip':
+      { const c=S.board[action.cell];
+        if(c){ c.face=c.face===FRONT?BACK:FRONT; }
+        if(!S.flipCooldown) S.flipCooldown=[0,0];
+        S.flipCooldown[opp]=2;
+        sfx('flip'); shakeScreen(); setLastMove(`${pname(opp)}：コインを裏返した`);
+        S.pending=null; afterAction(); }
+      break;
+
+    case 'card':
+      _receiveCard(action, opp);
+      break;
+
+    case 'pick':
+      commitPick(action.card);
+      break;
+
+    case 'surrender':
+      toastMsg(`${pname(opp)} が投降しました`);
+      setTimeout(()=>{
+        // 全ゲームを相手の負けとして強制終了
+        S.phase='final';
+        // 残りゲームを全部myRoleの勝ちで埋める
+        while(S.gameLog.length < 3){
+          const gi = S.gameLog.length;
+          const fakeScore = S.myRole===0 ? [9,0] : [0,9];
+          S.totals[0]+=fakeScore[0]; S.totals[1]+=fakeScore[1];
+          S.gameLog.push({parent:S.parent, board:[0,0], cards:[0,0], score:fakeScore, snapshot:Array(16).fill(null), runs:[], sets:[0,0]});
+        }
+        render();
+      }, 800);
+      break;
+  }
+}
+
+function _receiveCard(action, opp){
+  const {card} = action;
+  showCardUse(opp, card); shakeScreen();
+  switch(card){
+    case 'kakumei':
+      consumeCard(opp,'kakumei');
+      S.board.forEach(c=>{if(c&&!c.locked&&c.type!=='puppet')c.face=FRONT;});
+      sfx('card'); setLastMove(`${pname(opp)}：革命`); toastMsg('革命：すべて表になった');
+      afterAction(); break;
+    case 'chudan':
+      S.hands[opp]=[];
+      sfx('card'); setLastMove(`${pname(opp)}：中断`); toastMsg('中断：ゲームを終了します');
+      afterAction(true); break;
+    case 'shitei':
+      consumeCard(opp,'shitei');
+      S.designate[0]=action.face; S.designate[1]=action.face;
+      sfx('card'); setLastMove(`${pname(opp)}：指定（${faceLabel(action.face)}）`);
+      toastMsg(`指定：次の相手と自分のトス結果を${faceLabel(action.face)}に固定`);
+      afterAction(); break;
+    case 'nurikeshi':
+      consumeCard(opp,'nurikeshi'); S.board[action.cell].shared=true;
+      sfx('card'); setLastMove(`${pname(opp)}：色抜き`); toastMsg('色抜き：コインが両者のものになった');
+      afterAction(); break;
+    case 'ido':
+      consumeCard(opp,'ido'); S.board[action.to]=S.board[action.from]; S.board[action.from]=null;
+      sfx('card'); setLastMove(`${pname(opp)}：移動`); toastMsg('相手が移動を使用した');
+      afterAction(); break;
+    case 'kagikake':
+      consumeCard(opp,'kagikake'); S.board[action.cell].locked=true;
+      sfx('card'); setLastMove(`${pname(opp)}：鍵掛け`); toastMsg('鍵掛け：コインがロックされた');
+      afterAction(); break;
+    case 'uragaeshi':
+      consumeCard(opp,'uragaeshi');
+      { const c=S.board[action.cell]; if(c){ c.face=c.face===FRONT?BACK:FRONT; c.locked=true; c.tempLockFor=opp; c.tempLockTurns=1; } }
+      sfx('flip'); setLastMove(`${pname(opp)}：裏返し`); toastMsg('裏返し：コインを裏返してロックされた');
+      afterAction(); break;
+    case 'teitai':
+      consumeCard(opp,'teitai');
+      S.cardLocks.push({owner:opp^1, card:action.lock, releaseFor:opp, turns:2});
+      sfx('card'); setLastMove(`${pname(opp)}：停滞（${CARD_INFO[action.lock].name}）`);
+      toastMsg(`停滞：「${CARD_INFO[action.lock].name}」が止められた`);
+      afterAction(); break;
+    case 'fukusei':
+      consumeCard(opp,'fukusei'); if(action.dup) S.hands[opp].push(action.dup);
+      sfx('card'); setLastMove(`${pname(opp)}：複製`); toastMsg('複製：カードが増えた');
+      afterAction(); break;
+  }
+}
+
+/* ---- 投降 ---- */
+async function surrender(){
+  await sendAction({type:'surrender'});
+  // 自分の負けを記録
+  const user = loadLocalUser();
+  if(!user) return;
+  const uref = doc(db,'users', user.docId);
+  const usnap = await getDoc(uref);
+  if(usnap.exists()){
+    const d = usnap.data();
+    const history = [{result:'lose', opponentName:S.pnames[S.myRole^1], date:new Date().toLocaleDateString('ja-JP')}, ...(d.history||[])].slice(0,10);
+    await updateDoc(uref, {losses:(d.losses||0)+1, streak:0, history});
+    saveLocalUser({...user, losses:(user.losses||0)+1, streak:0, history});
+  }
+  leaveRoom(); newMatch(); render();
+}
+
+/* ---- 戦績保存 ---- */
+async function saveMatchResult(winnerRole){
+  const user = loadLocalUser();
+  if(!user || S.myRole===null) return;
+  const myWin = winnerRole===S.myRole;
+  const isDraw = winnerRole===null;
+  const result = isDraw?'draw':myWin?'win':'lose';
+  const oppName = S.pnames[S.myRole^1] || '相手';
+  const uref = doc(db,'users', user.docId);
+  try {
+    const usnap = await getDoc(uref);
+    if(!usnap.exists()) return;
+    const d = usnap.data();
+    const history = [{result, opponentName:oppName, date:new Date().toLocaleDateString('ja-JP')}, ...(d.history||[])].slice(0,10);
+    const wins = (d.wins||0) + (myWin?1:0);
+    const losses = (d.losses||0) + (!myWin&&!isDraw?1:0);
+    const draws = (d.draws||0) + (isDraw?1:0);
+    const streak = myWin ? (d.streak||0)+1 : 0;
+    await updateDoc(uref, {wins, losses, draws, streak, history});
+    saveLocalUser({...user, wins, losses, draws, streak, history});
+  } catch(e){ console.error('戦績保存エラー', e); }
+}
+
+/* ---- ユーザー登録モーダル ---- */
+function showRegisterModal(){
+  const bg=document.createElement('div'); bg.className='modal-bg';
+  bg.innerHTML=`<div class="modal">
+    <h3>プレイヤー名を決めてください</h3>
+    <p class="picker-note">ゲーム内で表示される名前です（最大10文字）</p>
+    <div class="set-row">
+      <input class="name-input" id="reg-name" maxlength="10" placeholder="例：うみつき">
+    </div>
+    <div class="close-row">
+      <button class="btn ghost sm" id="reg-cancel">キャンセル</button>
+      <button class="btn" id="reg-ok">決定</button>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+  const inp = document.getElementById('reg-name');
+  setTimeout(()=>inp.focus(), 30);
+  const ok = async()=>{
+    const name = inp.value.trim().slice(0,10);
+    if(!name){ toastMsg('名前を入力してください'); return; }
+    document.getElementById('reg-ok').disabled=true;
+    document.getElementById('reg-ok').textContent='登録中…';
+    const user = await createUser(name);
+    bg.remove();
+    toastMsg(`ようこそ、${user.name}#${user.id} さん！`);
+    render();
+  };
+  document.getElementById('reg-ok').onclick=ok;
+  document.getElementById('reg-cancel').onclick=()=>bg.remove();
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.isComposing) ok(); });
+}
+
+/* ---- 引き継ぎモーダル ---- */
+function showTransferModal(){
+  const bg=document.createElement('div'); bg.className='modal-bg';
+  bg.innerHTML=`<div class="modal">
+    <h3>引き継ぎ</h3>
+    <p class="picker-note">以前登録した名前とIDを入力してください</p>
+    <div class="set-row">
+      <input class="name-input" id="tr-name" maxlength="10" placeholder="ユーザー名">
+    </div>
+    <div class="set-row">
+      <input class="name-input" id="tr-id" maxlength="3" placeholder="ID（3桁の数字）" inputmode="numeric">
+    </div>
+    <div class="close-row">
+      <button class="btn ghost sm" id="tr-cancel">キャンセル</button>
+      <button class="btn" id="tr-ok">引き継ぐ</button>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+  setTimeout(()=>document.getElementById('tr-name').focus(), 30);
+  const ok = async()=>{
+    const name = document.getElementById('tr-name').value.trim();
+    const id = document.getElementById('tr-id').value.trim();
+    if(!name||!id){ toastMsg('名前とIDを両方入力してください'); return; }
+    document.getElementById('tr-ok').disabled=true;
+    document.getElementById('tr-ok').textContent='確認中…';
+    const user = await transferUser(name, id);
+    if(user){
+      bg.remove();
+      toastMsg(`引き継ぎ完了：${user.name}#${user.id}`);
+      render();
+    } else {
+      toastMsg('一致するユーザーが見つかりませんでした');
+      document.getElementById('tr-ok').disabled=false;
+      document.getElementById('tr-ok').textContent='引き継ぐ';
+    }
+  };
+  document.getElementById('tr-ok').onclick=ok;
+  document.getElementById('tr-cancel').onclick=()=>bg.remove();
+}
+
+/* ---- 戦績モーダル ---- */
+function showRecordModal(){
+  const user = loadLocalUser();
+  if(!user){ toastMsg('ユーザー情報がありません'); return; }
+  const total = (user.wins||0)+(user.losses||0)+(user.draws||0);
+  const rate = total>0 ? Math.round((user.wins||0)/total*100) : 0;
+  const histRows = (user.history||[]).map(h=>{
+    const icon = h.result==='win'?'🏆':h.result==='lose'?'💀':'🤝';
+    return `<div class="sb-row"><div>${icon} ${h.result==='win'?'勝利':h.result==='lose'?'敗北':'引き分け'}</div><div>${h.opponentName}</div><div>${h.date}</div></div>`;
+  }).join('') || '<div class="picker-note">対戦履歴がありません</div>';
+  const bg=document.createElement('div'); bg.className='modal-bg';
+  bg.innerHTML=`<div class="modal">
+    <h3>戦績</h3>
+    <div class="user-badge" style="margin-bottom:16px">
+      <span class="user-name">${user.name}</span><span class="user-id">#${user.id}</span>
+    </div>
+    <div class="scoreboard">
+      <div class="sb-row head"><div>勝</div><div>負</div><div>分</div><div>勝率</div><div>連勝</div></div>
+      <div class="sb-row"><div>${user.wins||0}</div><div>${user.losses||0}</div><div>${user.draws||0}</div><div>${rate}%</div><div>${user.streak||0}</div></div>
+    </div>
+    <h4 style="margin-top:16px">直近の対戦</h4>
+    <div class="scoreboard">${histRows}</div>
+    <div class="close-row"><button class="btn" id="rec-close">閉じる</button></div>
+  </div>`;
+  document.body.appendChild(bg);
+  bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
+  document.getElementById('rec-close').onclick=()=>bg.remove();
+}
+
+/* ---- グローバルに公開（gameロジックから呼ばれる） ---- */
+window.FB = {
+  getUser: loadLocalUser,
+  joinMatchQueue,
+  leaveQueue,
+  leaveRoom,
+  sendAction,
+  saveMatchResult,
+  surrender,
+  showRegisterModal,
+  showTransferModal,
+  showRecordModal,
+};
+</script>
+</body>
+</html>
