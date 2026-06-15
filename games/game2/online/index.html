@@ -461,9 +461,8 @@ function newMatch(){
     roomId:null,
     myRole:null,
     lastActionId:null,
-    _tossFired:false,    // 親決めトスを実行済みか（多重発火防止）
+    _tossFired:false,    // 親決めトス実行済みフラグ（多重発火防止）
     _tossTimer:null,     // 自動トスの保留中タイマーID
-    _parentTossKey:null, // 親決め結果の重複適用防止キー
   };
 }
 
@@ -1164,52 +1163,24 @@ function renderParentToss(){
       <p class="subtitle" style="margin-top:8px">${isP0 ? 'まもなく自動でコイントスします…' : '相手がコイントスをしています…'}</p>
     </div>`;
   // p0 側のみ、未トスなら1秒後に自動でトスを実行する。
-  // 1秒待つのは、両者の _subscribeRoom 初期化（盤面準備）が整ってから
-  // parentToss を送るため。これにより p1 側でトス結果の取りこぼし／
-  // フェーズ巻き戻しが起きにくくなる。
-  // 多重発火防止：既にトス済み or タイマー設定済みなら何もしない。
+  // 1秒待つのは、両者の購読初期化が整ってから parentToss を送るため。
+  // 多重発火防止：トス済み or タイマー設定済みなら何もしない。
   if(isP0 && !S._tossFired && !S._tossTimer){
     S._tossTimer = setTimeout(doParentToss, 1000);
   }
 }
-
-function applyParentTossResult(parent, sourceKey=null){
-  // parentToss は lastAction が後続の pick で上書きされても復元できるよう、
-  // room.parentToss にも永続化している。こちらの関数で二重適用を防ぐ。
-  if(sourceKey && S._parentTossKey === sourceKey) return false;
-  if(sourceKey) S._parentTossKey = sourceKey;
-
-  if(S._tossTimer){ clearTimeout(S._tossTimer); S._tossTimer=null; }
-  S._tossFired = true;
-
-  // すでにカード選択以降へ進んでいる場合は、同じ結果の再適用を無視する。
-  if(S.phase !== 'toss' && S.parent !== null) return false;
-
-  S.parent = parent;
-  toastMsg(`${pname(S.parent)} が親になりました`);
-  beginSelect();
-  return true;
-}
-// 親決めコイントスの実行（p0のみ呼ぶ）。多重実行を防止する。
+// 親決めコイントスの実行（p0のみ）。多重実行を防止する。
 function doParentToss(){
   if(S._tossFired) return;
+  if(S.phase!=='toss') return; // 既に進行済みなら実行しない
   S._tossFired = true;
   if(S._tossTimer){ clearTimeout(S._tossTimer); S._tossTimer=null; }
   const result = Math.random()<0.5 ? 0 : 1; // 0=p0が親, 1=p1が親
-  // sendAction は async (内部で await updateDoc)。
-  // 書き込み完了を待ってから beginSelect() することで、
-  // p1 が onSnapshot でアクションを受信するタイミングと揃い、
-  // sel.step の起点がずれることによる手番同期不具合を防ぐ。
-  FB.sendAction({type:'parentToss', parent: result}).then(ok=>{
-    // 書き込みに失敗した場合、p0だけが先へ進むと同期不能になるため進めない。
-    if(!ok){
-      S._tossFired = false;
-      render();
-      return;
-    }
-    // onSnapshot は lastActionId の照合で自分送信分をスキップするため、
-    // p0 のローカル状態はここで明示的に適用する。
-    applyParentTossResult(result, `local:${S.gameIndex}:${result}`);
+  // sendAction 完了後にローカルへ反映（onSnapshot は自分送信分をスキップするため）。
+  FB.sendAction({type:'parentToss', parent: result}).then(()=>{
+    S.parent = result;
+    toastMsg(`${pname(S.parent)} が親になりました`);
+    beginSelect();
   });
 }
 
@@ -1898,12 +1869,12 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
   S.myRole = myRole;
   _saveActiveRoom(roomId, myRole);
 
-  // ★順序保証：onSnapshot を登録する前に、await で初回状態の初期化を完了させる。
+  // ★重要：onSnapshot を登録する前に、await で初回状態の初期化を完了させる。
   // 旧実装は getDoc().then() と onSnapshot を並行させていたため、
-  // 「購読の更新コールバック（parentToss受信→beginSelect）が
-  //  初期化（startGame→phase='toss'）より先に走り、後から phase を
-  //  toss に巻き戻す」レースが発生し、p1 が選択画面に移行しないことがあった。
-  // await で初期化を先に終わらせることで、このレースを原理的に排除する。
+  // 「onSnapshot の初回/差分発火で parentToss を受信して select に進んだ後、
+  //  遅れて走った getDoc().then() の startGame() が phase を toss に巻き戻す」
+  // というレースが発生し、トスを任せた側が選択画面に移行しなかった。
+  let initDoc = null;
   try {
     const snap = await getDoc(doc(db,'rooms',roomId));
     if(!snap.exists()){
@@ -1912,27 +1883,39 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
       newMatch(); render();
       return;
     }
-    const d = snap.data();
-    S.pnames[0] = d.p0.userName;
-    S.pnames[1] = d.p1.userName;
-    if(isRejoin && d.gameState){
-      restoreState(d.gameState);
-      try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
-      toastMsg('試合に再接続しました');
-      render();
-      _resetTurnWatchdog();
-    } else {
-      S.gameIndex=0; S.totals=[0,0]; S.gameLog=[]; S.lastMove=null;
-      if(isRejoin) try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
-      startGame();
-      _resetTurnWatchdog();
-    }
+    initDoc = snap.data();
   } catch(e){
-    console.error('ルーム初期化エラー', e);
+    console.error('ルーム初期化の読み込みに失敗', e);
     _clearActiveRoom();
     toastMsg('試合の読み込みに失敗しました');
     newMatch(); render();
     return;
+  }
+
+  S.pnames[0] = initDoc.p0.userName;
+  S.pnames[1] = initDoc.p1.userName;
+
+  if(isRejoin && initDoc.gameState){
+    restoreState(initDoc.gameState);
+    if(initDoc.lastActionId) S.lastActionId = initDoc.lastActionId; // 既処理分を記録
+    try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
+    toastMsg('試合に再接続しました');
+    render();
+    _resetTurnWatchdog();
+  } else {
+    S.gameIndex=0; S.totals=[0,0]; S.gameLog=[]; S.lastMove=null;
+    if(isRejoin) try { updateDoc(doc(db,'rooms',roomId), {disconnected: null}); } catch(e){}
+    startGame();  // 通常はここで phase='toss'（ゲーム1）
+
+    // ★層2：購読開始が遅れ、初回 getDoc 時点で既に相手のアクション
+    // （特に parentToss）が書き込まれている場合は、ここで反映してしまう。
+    // こうすることで、この後 onSnapshot を登録しても初回発火が
+    // lastActionId 一致でスキップされ、二重処理も巻き戻りも起きない。
+    if(initDoc.lastAction && initDoc.lastActionId && initDoc.lastActionId !== S.lastActionId){
+      S.lastActionId = initDoc.lastActionId;
+      _receiveAction(initDoc.lastAction);
+    }
+    _resetTurnWatchdog();
   }
 
   const roomRef = doc(db,'rooms',roomId);
@@ -1959,13 +1942,6 @@ async function _subscribeRoom(roomId, myRole, isRejoin=false){
     if(d.disconnected !== null && d.disconnected !== undefined && d.disconnected !== myRole){
       _handleDisconnect(d.disconnected, roomId);
       return;
-    }
-
-    // 親決め結果は lastAction だけだと、直後の pick で上書きされる可能性がある。
-    // そのため room.parentToss を永続フィールドとして見て、受信側が toss で止まらないようにする。
-    if(d.parentToss && d.parentToss.gameIndex === S.gameIndex && S.phase === 'toss' && S.parent === null){
-      const pt = d.parentToss;
-      applyParentTossResult(pt.parent, pt.actionId || `${pt.gameIndex}:${pt.parent}`);
     }
 
     if(!d.lastAction || d.lastActionId === S.lastActionId) return;
@@ -2166,36 +2142,19 @@ function restoreState(st){
 
 /* ---- アクション送信 ---- */
 async function sendAction(action){
-  if(!S.roomId) return false;
+  if(!S.roomId) return;
   const actionId = crypto.randomUUID();
   S.lastActionId = actionId;
   try {
-    const payload = {
+    await updateDoc(doc(db,'rooms', S.roomId), {
       lastAction: action,
       lastActionId: actionId,
       gameState: serializeState()
-    };
-
-    // 親決め結果だけは「一時的な最新アクション」ではなく、
-    // room に残る永続フィールドとしても保存する。
-    // これにより、p0 が親になってすぐカードを選び lastAction が pick に上書きされても、
-    // p1 は parentToss を読んで select フェーズへ進める。
-    if(action.type === 'parentToss'){
-      payload.parentToss = {
-        gameIndex: S.gameIndex,
-        parent: action.parent,
-        actionId,
-        createdAtMs: Date.now()
-      };
-    }
-
-    await updateDoc(doc(db,'rooms', S.roomId), payload);
+    });
     setTimeout(()=>_resetTurnWatchdog(), 100);
-    return true;
   } catch(e){
     toastMsg('通信エラーが発生しました');
     console.error(e);
-    return false;
   }
 }
 
@@ -2205,9 +2164,13 @@ function _receiveAction(action){
   switch(action.type){
 
     case 'parentToss':
-      // p1側のみここを通る（p0は sendAction().then() 内で処理済み）。
-      // 永続フィールド parentToss で先に適用済みの場合は無視される。
-      applyParentTossResult(action.parent);
+      // 親トス結果の反映。onSnapshot 経由でも、購読初期化経由でも呼ばれうる。
+      // 既に select 以降に進んでいれば二重実行しない（冪等化）。
+      if(S.phase==='toss' || S.phase===undefined || S.phase===null){
+        S.parent = action.parent;
+        toastMsg(`${pname(S.parent)} が親になりました`);
+        beginSelect();
+      }
       break;
 
     case 'place':
