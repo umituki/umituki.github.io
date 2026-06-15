@@ -338,7 +338,7 @@ const pname=p=> (S.pnames && S.pnames[p]) ? S.pnames[p] : (p===0?'あなた':'�
 const isHuman=p=> S && S.myRole!==null ? p===S.myRole : p===MY;  // 自分のroleと一致するプレイヤーのみ操作可
 // 設定は match を跨いで保持（newMatchでリセットしない）
 let SETTINGS={ sound:true, anim:true, shake:true };
-const APP_VERSION='Ver.1.0.9';
+const APP_VERSION='Ver.1.0.10';
 
 const CARD_INFO={
   shitei:{name:'指定', desc:'次の相手と自分のコイントス結果を、選択した向きに固定する。', prio:6},
@@ -2247,43 +2247,137 @@ async function finishRoom(){
 }
 
 /* ---- 状態のシリアライズ/復元 ---- */
+function _pairArray(value, fallback=[null,null]){
+  if(Array.isArray(value)){
+    return [
+      value.length>0 ? value[0] : fallback[0],
+      value.length>1 ? value[1] : fallback[1]
+    ];
+  }
+  if(value && typeof value === 'object'){
+    return [
+      Object.prototype.hasOwnProperty.call(value,'p0') ? value.p0 : fallback[0],
+      Object.prototype.hasOwnProperty.call(value,'p1') ? value.p1 : fallback[1]
+    ];
+  }
+  return fallback.slice();
+}
+function _pairObject(value, fallback=[null,null]){
+  const a = _pairArray(value, fallback);
+  return {
+    p0: a[0] === undefined ? null : a[0],
+    p1: a[1] === undefined ? null : a[1]
+  };
+}
+function _safeArray(value, fallback=[]){
+  return Array.isArray(value) ? value : fallback.slice();
+}
+function _serializeRuns(runs){
+  const out = {};
+  (runs || []).forEach((r, i)=>{
+    if(!r) return;
+    out['r'+i] = {
+      player: r.player ?? null,
+      len: r.len ?? null,
+      cells: _safeArray(r.cells)
+    };
+  });
+  return out;
+}
+function _restoreRuns(runs){
+  if(Array.isArray(runs)) return runs;
+  if(!runs || typeof runs !== 'object') return [];
+  return Object.keys(runs)
+    .sort((a,b)=>parseInt(a.slice(1),10)-parseInt(b.slice(1),10))
+    .map(k=>({
+      player: runs[k].player,
+      len: runs[k].len,
+      cells: _safeArray(runs[k].cells)
+    }));
+}
+function _serializeGameRecord(rec){
+  if(!rec) return null;
+  return {
+    parent: rec.parent ?? null,
+    board: _pairObject(rec.board, [0,0]),
+    cards: _pairObject(rec.cards, [0,0]),
+    score: _pairObject(rec.score, [0,0]),
+    snapshot: _safeArray(rec.snapshot, Array(16).fill(null)),
+    runs: _serializeRuns(rec.runs),
+    sets: _pairObject(rec.sets, [0,0])
+  };
+}
+function _restoreGameRecord(rec){
+  if(!rec) return null;
+  return {
+    parent: rec.parent ?? null,
+    board: _pairArray(rec.board, [0,0]),
+    cards: _pairArray(rec.cards, [0,0]),
+    score: _pairArray(rec.score, [0,0]),
+    snapshot: _safeArray(rec.snapshot, Array(16).fill(null)),
+    runs: _restoreRuns(rec.runs),
+    sets: _pairArray(rec.sets, [0,0])
+  };
+}
+function _serializeGameLog(log){
+  const out = {};
+  (log || []).forEach((rec, i)=>{
+    if(rec) out['g'+i] = _serializeGameRecord(rec);
+  });
+  return out;
+}
+function _restoreGameLog(log){
+  if(Array.isArray(log)) return log.map(_restoreGameRecord).filter(Boolean);
+  if(!log || typeof log !== 'object') return [];
+  const arr = [];
+  Object.keys(log).forEach(k=>{
+    const n = parseInt(k.slice(1),10);
+    if(Number.isFinite(n)) arr[n] = _restoreGameRecord(log[k]);
+  });
+  return arr.filter(Boolean);
+}
 function serializeState(){
+  // Firestore は「配列の中に配列」を保存できない。
+  // hands: [[], []] のような値は {p0: [], p1: []} に変換して保存する。
   return {
     phase: S.phase,
     gameIndex: S.gameIndex,
-    totals: S.totals,
-    gameLog: S.gameLog,
+    totals: _pairObject(S.totals, [0,0]),
+    gameLog: _serializeGameLog(S.gameLog),
     parent: S.parent,
     current: S.current,
-    board: S.board,
-    coins: S.coins,
-    hands: S.hands,
-    designate: S.designate,
-    cardLocks: S.cardLocks || [],
-    flipCooldown: S.flipCooldown || [0,0],
-    sel: S.sel ? { available: Array.from(S.sel.available), order: S.sel.order, step: S.sel.step } : null,
-    over: S.over,
-    lastBreakdown: S.lastBreakdown || null,
-    pnames: S.pnames,
+    board: _safeArray(S.board, Array(16).fill(null)),
+    coins: _pairObject(S.coins, [8,8]),
+    hands: {
+      p0: _safeArray(S.hands && S.hands[0]),
+      p1: _safeArray(S.hands && S.hands[1])
+    },
+    designate: _pairObject(S.designate, [null,null]),
+    cardLocks: _safeArray(S.cardLocks),
+    flipCooldown: _pairObject(S.flipCooldown, [0,0]),
+    sel: S.sel ? { available: Array.from(S.sel.available), order: _safeArray(S.sel.order), step: S.sel.step } : null,
+    over: !!S.over,
+    lastBreakdown: _serializeGameRecord(S.lastBreakdown),
+    pnames: _pairObject(S.pnames, [null,null])
   };
 }
 function restoreState(st){
   S.phase = st.phase;
-  S.gameIndex = st.gameIndex;
-  S.totals = st.totals;
-  S.gameLog = st.gameLog || [];
-  S.parent = st.parent;
-  S.current = st.current;
-  S.board = st.board;
-  S.coins = st.coins;
-  S.hands = st.hands;
-  S.designate = st.designate;
-  S.cardLocks = st.cardLocks || [];
-  S.flipCooldown = st.flipCooldown || [0,0];
-  S.sel = st.sel ? { available: new Set(st.sel.available), order: st.sel.order, step: st.sel.step } : null;
-  S.over = st.over || false;
-  S.lastBreakdown = st.lastBreakdown || null;
-  if(st.pnames) S.pnames = st.pnames;
+  S.gameIndex = st.gameIndex ?? 0;
+  S.totals = _pairArray(st.totals, [0,0]);
+  S.gameLog = _restoreGameLog(st.gameLog);
+  S.parent = st.parent ?? null;
+  S.current = st.current ?? null;
+  S.board = _safeArray(st.board, Array(16).fill(null));
+  S.coins = _pairArray(st.coins, [8,8]);
+  S.hands = _pairArray(st.hands, [[],[]]).map(v=>_safeArray(v));
+  S.designate = _pairArray(st.designate, [null,null]);
+  S.cardLocks = _safeArray(st.cardLocks);
+  S.flipCooldown = _pairArray(st.flipCooldown, [0,0]);
+  S.sel = st.sel ? { available: new Set(_safeArray(st.sel.available)), order: _safeArray(st.sel.order), step: st.sel.step ?? 0 } : null;
+  S.over = !!st.over;
+  S.lastBreakdown = _restoreGameRecord(st.lastBreakdown);
+  if(st.pnames) S.pnames = _pairArray(st.pnames, [null,null]);
   S.pending = null;
   S.busy = false;
 }
