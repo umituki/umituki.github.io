@@ -100,10 +100,13 @@
     fill:var(--handle-fill);
     stroke-width:4;
     pointer-events:none;
+    transform-box:fill-box;
+    transform-origin:center;
     transition:transform .09s cubic-bezier(.24,.85,.4,1);
   }
   .handle.min{ stroke:var(--ring-min-strong); }
   .handle.sec{ stroke:var(--ring-sec-strong); }
+  .handle.hover{ transform:scale(1.2); }
   .handle.snap{ animation:snapPulse .16s ease-out; }
   @keyframes snapPulse{
     0%{ transform-origin:center; }
@@ -238,6 +241,34 @@
 
   const pad2 = n => String(n).padStart(2, "0");
 
+  /* ---------------------------------------------------------------- *
+   *  Light "カ" click sound played while stepping the picker
+   * ---------------------------------------------------------------- */
+
+  let audioCtx = null;
+  function ensureAudio() {
+    if (!audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) audioCtx = new Ctx();
+    }
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  }
+  function playClick() {
+    if (!audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(1500, t0);
+    osc.frequency.exponentialRampToValueAtTime(550, t0 + 0.03);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.11, t0 + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.055);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + 0.07);
+  }
+
   function angleForValue(v) {
     return ((v % 60) + 60) % 60 * 6; // degrees clockwise from top
   }
@@ -289,16 +320,46 @@
     ticks.forEach(t => t.classList.remove("visible"));
   }
 
+  function showAllTicks(ticks) {
+    ticks.forEach(t => t.classList.add("visible"));
+  }
+
+  // "magnetic" snapping to the quarter marks (0/15/30/45)
+  const MARKS = [0, 15, 30, 45];
+  const MAGNET_RADIUS = 1;   // steps within which a mark can pull the handle in
+  const FAST_SPEED = 0.2;    // deg/ms - at/above this the magnet is (re-)armed
+  const LOITER_MS = 220;     // sustained non-fast dwell time before disengaging a mark's magnet
+
+  function circularDiff(a, b) {
+    const d = Math.abs(a - b) % 60;
+    return Math.min(d, 60 - d);
+  }
+  function nearestMark(v) {
+    let best = MARKS[0], bd = circularDiff(v, MARKS[0]);
+    for (let i = 1; i < MARKS.length; i++) {
+      const d = circularDiff(v, MARKS[i]);
+      if (d < bd) { bd = d; best = MARKS[i]; }
+    }
+    return { mark: best, diff: bd };
+  }
+
   class RingControl {
-    constructor(handleEl, hitringEl, ticks, radius, initial) {
+    constructor(handleEl, hitringEl, ticks, radius, initial, hoverRadius) {
       this.handle = handleEl;
       this.hitring = hitringEl;
       this.ticks = ticks;
       this.radius = radius;
+      this.hoverRadius = hoverRadius;
       this.value = initial;
       this.dragging = false;
       this.holdTimer = null;
       this.onChange = null;
+      this.onStep = null;
+
+      this._lastDeg = null;
+      this._lastMoveTime = null;
+      this._magnetArmed = { 0: true, 15: true, 30: true, 45: true };
+      this._loiterSince = { 0: null, 15: null, 30: null, 45: null };
 
       this.render(false);
       this._bind();
@@ -320,50 +381,107 @@
       const changed = v !== this.value;
       this.value = v;
       this.render(changed);
-      if (changed && notify !== false && this.onChange) this.onChange(this.value);
+      if (changed) {
+        if (this.dragging && this.onStep) this.onStep(this.value);
+        if (notify !== false && this.onChange) this.onChange(this.value);
+      }
+    }
+
+    _resetMagnetState() {
+      MARKS.forEach(m => { this._magnetArmed[m] = true; this._loiterSince[m] = null; });
+      this._lastDeg = null;
+      this._lastMoveTime = null;
+    }
+
+    // resolves the raw pointer angle into a (possibly magnet-snapped) step value
+    _resolveDragValue(deg, now) {
+      const rawStep = Math.round(deg / 6) % 60;
+
+      let speed = Infinity;
+      if (this._lastDeg !== null) {
+        let dDeg = Math.abs(deg - this._lastDeg);
+        if (dDeg > 180) dDeg = 360 - dDeg;
+        const dt = Math.max(1, now - this._lastMoveTime);
+        speed = dDeg / dt;
+      }
+      this._lastDeg = deg;
+      this._lastMoveTime = now;
+
+      const { mark, diff } = nearestMark(rawStep);
+
+      if (diff > MAGNET_RADIUS) {
+        // outside every mark's zone: re-arm the nearby mark for its next approach
+        this._magnetArmed[mark] = true;
+        this._loiterSince[mark] = null;
+        return rawStep;
+      }
+
+      if (speed >= FAST_SPEED) {
+        this._magnetArmed[mark] = true;
+        this._loiterSince[mark] = null;
+      } else {
+        if (this._loiterSince[mark] == null) this._loiterSince[mark] = now;
+        else if (now - this._loiterSince[mark] > LOITER_MS) this._magnetArmed[mark] = false;
+      }
+
+      return this._magnetArmed[mark] ? mark : rawStep;
+    }
+
+    _pointerNearHandle(e) {
+      const rect = svg.getBoundingClientRect();
+      const scale = 320 / rect.width;
+      const px = (e.clientX - rect.left) * scale;
+      const py = (e.clientY - rect.top) * scale;
+      const hx = Number(this.handle.getAttribute("cx"));
+      const hy = Number(this.handle.getAttribute("cy"));
+      return Math.hypot(px - hx, py - hy) <= this.hoverRadius;
     }
 
     _bind() {
       const el = this.hitring;
-
-      el.addEventListener("pointerenter", e => {
-        if (el.hasPointerCapture && el.style.pointerEvents === "none") return;
-      });
 
       el.addEventListener("pointermove", e => {
         if (this.dragging) return;
         if (el.classList.contains("locked")) return;
         const deg = angleFromClientPoint(e, this.radius);
         updateTickVisibility(this.ticks, deg / 6);
+        this.handle.classList.toggle("hover", this._pointerNearHandle(e));
       });
 
       el.addEventListener("pointerleave", () => {
-        if (!this.dragging) hideTicks(this.ticks);
+        if (!this.dragging) {
+          hideTicks(this.ticks);
+          this.handle.classList.remove("hover");
+        }
       });
 
       el.addEventListener("pointerdown", e => {
         e.preventDefault();
+        ensureAudio();
         el.setPointerCapture(e.pointerId);
         clearTimeout(this.holdTimer);
         this.holdTimer = setTimeout(() => {
           this.dragging = true;
           el.classList.add("dragging");
+          this.handle.classList.add("hover");
+          this._resetMagnetState();
+          showAllTicks(this.ticks);
         }, 130);
       });
 
       el.addEventListener("pointermove", e => {
         if (!this.dragging) return;
         const deg = angleFromClientPoint(e, this.radius);
-        const v = Math.round(deg / 6) % 60;
-        updateTickVisibility(this.ticks, deg / 6);
+        const v = this._resolveDragValue(deg, performance.now());
         this.setValue(v, true);
       });
 
-      const end = e => {
+      const end = () => {
         clearTimeout(this.holdTimer);
         if (this.dragging) {
           this.dragging = false;
           el.classList.remove("dragging");
+          this.handle.classList.remove("hover");
           hideTicks(this.ticks);
         }
       };
@@ -372,14 +490,16 @@
     }
   }
 
-  const minCtl = new RingControl(minHandle, minHitring, minTicks, R_MIN, 0);
-  const secCtl = new RingControl(secHandle, secHitring, secTicks, R_SEC, 0);
+  const minCtl = new RingControl(minHandle, minHitring, minTicks, R_MIN, 0, 22);
+  const secCtl = new RingControl(secHandle, secHitring, secTicks, R_SEC, 0, 20);
 
   function updateCenterLabel() {
     centerLabel.textContent = `${pad2(minCtl.value)}:${pad2(secCtl.value)}`;
   }
   minCtl.onChange = updateCenterLabel;
   secCtl.onChange = updateCenterLabel;
+  minCtl.onStep = playClick;
+  secCtl.onStep = playClick;
   updateCenterLabel();
 
   function pickerTotalSeconds() {
@@ -400,7 +520,7 @@
 
   const HCX = W / 2;
   const Y_TOP = 46, Y_MID = 150, Y_BOTTOM = 254;
-  const OUTER_HALF = 96, NECK_HALF = 15;
+  const OUTER_HALF = 96, NECK_HALF = 6;
   const WALL_T = 6;
 
   const { Engine, World, Bodies, Body, Composite } = Matter;
@@ -428,7 +548,9 @@
     isStatic: true, friction: 0.6, render: { visible: false }
   });
 
-  let gate = Bodies.rectangle(HCX, Y_MID, NECK_HALF * 2 + 2, 8, {
+  // the neck is sealed at all times - grains never physically pass through it;
+  // instead a single grain is relocated below it on each drop tick (see dropOneGrain)
+  const neckSeal = Bodies.rectangle(HCX, Y_MID, NECK_HALF * 2 + WALL_T, WALL_T + 2, {
     isStatic: true, render: { visible: false }
   });
 
@@ -437,7 +559,7 @@
   const guardRight = Bodies.rectangle(HCX + OUTER_HALF + 14, H / 2, 8, H + 40, { isStatic: true, render: { visible: false } });
   const guardBottom = Bodies.rectangle(HCX, H + 20, OUTER_HALF * 4, 8, { isStatic: true, render: { visible: false } });
 
-  World.add(world, [topLeftWall, topRightWall, bottomLeftWall, bottomRightWall, floor, gate, guardLeft, guardRight, guardBottom]);
+  World.add(world, [topLeftWall, topRightWall, bottomLeftWall, bottomRightWall, floor, neckSeal, guardLeft, guardRight, guardBottom]);
 
   let grains = [];
 
@@ -446,7 +568,7 @@
   function computeSandPlan(totalSeconds) {
     const secs = Math.max(1, totalSeconds);
     const grainCount = clamp(secs, 6, 180);
-    const radius = clamp(200 / secs, 1.8, 5);
+    const radius = clamp(200 / secs, 1.8, 6);
     const dropIntervalMs = (secs * 1000) / grainCount;
     return { grainCount, radius, dropIntervalMs };
   }
@@ -490,47 +612,72 @@
 
   spawnGrains(0);
 
-  // gate cycling to pace the flow at roughly one grain per second
+  // paces the flow at roughly one grain per second: instead of letting grains
+  // physically squeeze through the (sealed) neck, the grain sitting closest to
+  // it is relocated just below the partition and left to fall from there
   let nextDropAt = 0;
-  let gateReopenTimer = null;
   let running = false;
 
-  function openGateBriefly(now) {
-    if (!Composite.get(world, gate.id, "body")) return;
-    World.remove(world, gate);
-    const openFor = Math.min(220, sandPlan.dropIntervalMs * 0.5);
-    clearTimeout(gateReopenTimer);
-    gateReopenTimer = setTimeout(() => {
-      World.add(world, gate);
-    }, openFor);
-    nextDropAt = now + sandPlan.dropIntervalMs;
+  function dropOneGrain() {
+    let candidate = null;
+    for (const g of grains) {
+      if (g.position.y < Y_MID - 4 && (!candidate || g.position.y > candidate.position.y)) {
+        candidate = g;
+      }
+    }
+    if (!candidate) return;
+    const jitter = (Math.random() - 0.5) * NECK_HALF;
+    Body.setPosition(candidate, { x: HCX + jitter, y: Y_MID + sandPlan.radius + 6 });
+    Body.setVelocity(candidate, { x: 0, y: 1.2 });
+    Body.setAngularVelocity(candidate, 0);
   }
+
+  function roundedClosedPath(pathCtx, pts, radii) {
+    const n = pts.length;
+    pathCtx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const prev = pts[(i - 1 + n) % n];
+      const curr = pts[i];
+      const next = pts[(i + 1) % n];
+
+      const toPrev = { x: prev.x - curr.x, y: prev.y - curr.y };
+      const toNext = { x: next.x - curr.x, y: next.y - curr.y };
+      const lenPrev = Math.hypot(toPrev.x, toPrev.y);
+      const lenNext = Math.hypot(toNext.x, toNext.y);
+      const rr = Math.min(radii[i], lenPrev / 2, lenNext / 2);
+
+      const startX = curr.x + (toPrev.x / lenPrev) * rr;
+      const startY = curr.y + (toPrev.y / lenPrev) * rr;
+      const endX = curr.x + (toNext.x / lenNext) * rr;
+      const endY = curr.y + (toNext.y / lenNext) * rr;
+
+      if (i === 0) pathCtx.moveTo(startX, startY);
+      else pathCtx.lineTo(startX, startY);
+      pathCtx.quadraticCurveTo(curr.x, curr.y, endX, endY);
+    }
+    pathCtx.closePath();
+  }
+
+  const glassOutline = [
+    { x: HCX - OUTER_HALF, y: Y_TOP },
+    { x: HCX - NECK_HALF, y: Y_MID },
+    { x: HCX - OUTER_HALF, y: Y_BOTTOM },
+    { x: HCX + OUTER_HALF, y: Y_BOTTOM },
+    { x: HCX + NECK_HALF, y: Y_MID },
+    { x: HCX + OUTER_HALF, y: Y_TOP }
+  ];
+  const glassCornerRadii = [16, 7, 16, 16, 7, 16];
 
   function drawHourglass() {
     ctx.clearRect(0, 0, W, H);
 
-    // glass frame
-    ctx.beginPath();
-    ctx.moveTo(HCX - OUTER_HALF, Y_TOP);
-    ctx.lineTo(HCX - NECK_HALF, Y_MID);
-    ctx.lineTo(HCX - OUTER_HALF, Y_BOTTOM);
-    ctx.lineTo(HCX + OUTER_HALF, Y_BOTTOM);
-    ctx.lineTo(HCX + NECK_HALF, Y_MID);
-    ctx.lineTo(HCX + OUTER_HALF, Y_TOP);
-    ctx.closePath();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    roundedClosedPath(ctx, glassOutline, glassCornerRadii);
     ctx.fillStyle = "rgba(255,253,248,.35)";
     ctx.fill();
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 3;
     ctx.strokeStyle = "#cdbfa8";
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(HCX - OUTER_HALF, Y_TOP);
-    ctx.lineTo(HCX + OUTER_HALF, Y_TOP);
-    ctx.moveTo(HCX - OUTER_HALF, Y_BOTTOM);
-    ctx.lineTo(HCX + OUTER_HALF, Y_BOTTOM);
-    ctx.strokeStyle = "#cdbfa8";
-    ctx.lineWidth = 2.5;
     ctx.stroke();
 
     // sand grains
@@ -550,7 +697,8 @@
     Engine.update(engine, dt);
 
     if (running && now >= nextDropAt) {
-      openGateBriefly(now);
+      dropOneGrain();
+      nextDropAt = now + sandPlan.dropIntervalMs;
     }
 
     drawHourglass();
@@ -566,8 +714,6 @@
     },
     pause() {
       running = false;
-      clearTimeout(gateReopenTimer);
-      if (!Composite.get(world, gate.id, "body")) World.add(world, gate);
     },
     resume(remainingSeconds) {
       sandPlan = computeSandPlan(Math.max(remainingSeconds, 1));
@@ -576,8 +722,6 @@
     },
     reset(totalSeconds) {
       running = false;
-      clearTimeout(gateReopenTimer);
-      if (!Composite.get(world, gate.id, "body")) World.add(world, gate);
       spawnGrains(totalSeconds);
     }
   };
