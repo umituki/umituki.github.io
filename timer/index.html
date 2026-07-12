@@ -1,1 +1,684 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Timer</title>
+<style>
+  :root{
+    --bg-1:#faf7f2;
+    --bg-2:#f0ebe1;
+    --panel:#fffdfa;
+    --panel-border:#e8e0d0;
+    --ink:#6f6659;
+    --ink-soft:#a89f8f;
+    --ring-min:#e8cdae;
+    --ring-min-strong:#d6a86f;
+    --ring-sec:#c3ddce;
+    --ring-sec-strong:#8fbfa2;
+    --handle-fill:#fffefb;
+    --glass:#cdbfa8;
+    --glass-fill:rgba(255,253,248,.35);
+    --sand-a:#e3bd85;
+    --sand-b:#d4a565;
+    --btn-bg:#fffdfa;
+    --btn-border:#e2d8c6;
+    --accent:#c98a55;
+    --shadow:0 12px 30px rgba(120,100,70,.10);
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;
+    height:100%;
+    background:linear-gradient(160deg,var(--bg-1),var(--bg-2));
+    font-family:"Hiragino Sans","Yu Gothic UI",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    color:var(--ink);
+  }
+  body{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+  }
+  .app{
+    width:100%;
+    max-width:920px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:28px;
+  }
+  h1{
+    margin:0;
+    font-size:22px;
+    font-weight:600;
+    letter-spacing:.08em;
+    color:var(--ink);
+  }
+  .panels{
+    width:100%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:20px;
+    flex-wrap:wrap;
+  }
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--panel-border);
+    border-radius:24px;
+    box-shadow:var(--shadow);
+    padding:18px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .panel svg, .panel canvas{
+    width:300px;
+    height:300px;
+    display:block;
+  }
+  #picker{ touch-action:none; }
+  #picker.locked .hitring{ pointer-events:none; }
+  #picker.locked{ opacity:.55; }
 
+  .ring-track{ fill:none; stroke-linecap:round; }
+  .hitring{ fill:none; stroke:transparent; cursor:grab; }
+  .hitring.dragging{ cursor:grabbing; }
+
+  .tick{
+    fill:var(--ink-soft);
+    opacity:0;
+    transition:opacity .18s ease;
+  }
+  .tick.visible{ opacity:1; }
+  .tick.min{ fill:var(--ring-min-strong); }
+  .tick.sec{ fill:var(--ring-sec-strong); }
+
+  .handle{
+    fill:var(--handle-fill);
+    stroke-width:4;
+    pointer-events:none;
+    transition:transform .09s cubic-bezier(.24,.85,.4,1);
+  }
+  .handle.min{ stroke:var(--ring-min-strong); }
+  .handle.sec{ stroke:var(--ring-sec-strong); }
+  .handle.snap{ animation:snapPulse .16s ease-out; }
+  @keyframes snapPulse{
+    0%{ transform-origin:center; }
+    40%{ filter:drop-shadow(0 0 4px rgba(201,138,85,.45)); }
+    100%{ filter:none; }
+  }
+
+  .center-label{
+    font-size:34px;
+    font-weight:600;
+    fill:var(--ink);
+    text-anchor:middle;
+    dominant-baseline:middle;
+    letter-spacing:.02em;
+    user-select:none;
+  }
+  .center-sub{
+    font-size:11px;
+    fill:var(--ink-soft);
+    text-anchor:middle;
+    letter-spacing:.15em;
+    user-select:none;
+  }
+
+  .legend{
+    display:flex;
+    gap:16px;
+    font-size:11px;
+    color:var(--ink-soft);
+    letter-spacing:.05em;
+  }
+  .legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .legend i{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .legend .dot-min{ background:var(--ring-min-strong); }
+  .legend .dot-sec{ background:var(--ring-sec-strong); }
+
+  .controls{
+    display:flex;
+    gap:12px;
+  }
+  button{
+    appearance:none;
+    border:1px solid var(--btn-border);
+    background:var(--btn-bg);
+    color:var(--ink);
+    padding:11px 26px;
+    border-radius:999px;
+    font-size:14px;
+    letter-spacing:.06em;
+    cursor:pointer;
+    box-shadow:0 4px 12px rgba(120,100,70,.08);
+    transition:transform .12s ease, background .12s ease, opacity .12s ease;
+  }
+  button:hover:not(:disabled){ transform:translateY(-1px); }
+  button:active:not(:disabled){ transform:translateY(0); }
+  button:disabled{ opacity:.4; cursor:default; }
+  #startBtn{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  #startBtn:hover:not(:disabled){ background:#bb7a45; }
+
+  .status{
+    font-size:12px;
+    color:var(--ink-soft);
+    letter-spacing:.1em;
+    min-height:16px;
+  }
+
+  @media (max-width:560px){
+    .panel svg, .panel canvas{ width:250px; height:250px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>TIMER</h1>
+
+  <div class="panels">
+    <div class="panel">
+      <svg id="picker" viewBox="0 0 320 320">
+        <circle class="ring-track" cx="160" cy="160" r="130" stroke="var(--ring-min)" stroke-width="3"></circle>
+        <circle class="ring-track" cx="160" cy="160" r="82"  stroke="var(--ring-sec)" stroke-width="3"></circle>
+
+        <g id="minTicks"></g>
+        <g id="secTicks"></g>
+
+        <circle id="minHitring" class="hitring" cx="160" cy="160" r="130" stroke-width="34"></circle>
+        <circle id="secHitring" class="hitring" cx="160" cy="160" r="82"  stroke-width="34"></circle>
+
+        <circle id="minHandle" class="handle min" cx="160" cy="30" r="11"></circle>
+        <circle id="secHandle" class="handle sec" cx="160" cy="78" r="9"></circle>
+
+        <text id="centerLabel" class="center-label" x="160" y="156">00:00</text>
+        <text class="center-sub" x="160" y="182">MIN : SEC</text>
+      </svg>
+    </div>
+
+    <div class="panel">
+      <canvas id="hourglass" width="300" height="300"></canvas>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot-min"></i>外側 = 分</span>
+    <span><i class="dot-sec"></i>内側 = 秒</span>
+  </div>
+
+  <div class="controls">
+    <button id="startBtn">開始</button>
+    <button id="pauseBtn" disabled>一時停止</button>
+    <button id="resetBtn">リセット</button>
+  </div>
+  <div class="status" id="statusText"></div>
+</div>
+
+<script src="vendor/matter.min.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  /* ---------------------------------------------------------------- *
+   *  Dual-circle time picker
+   * ---------------------------------------------------------------- */
+
+  const svg = document.getElementById("picker");
+  const CX = 160, CY = 160;
+  const R_MIN = 130, R_SEC = 82;
+
+  const minHandle = document.getElementById("minHandle");
+  const secHandle = document.getElementById("secHandle");
+  const minHitring = document.getElementById("minHitring");
+  const secHitring = document.getElementById("secHitring");
+  const centerLabel = document.getElementById("centerLabel");
+
+  const pad2 = n => String(n).padStart(2, "0");
+
+  function angleForValue(v) {
+    return ((v % 60) + 60) % 60 * 6; // degrees clockwise from top
+  }
+
+  function pointOnCircle(r, angleDeg) {
+    const t = angleDeg * Math.PI / 180;
+    return { x: CX + r * Math.sin(t), y: CY - r * Math.cos(t) };
+  }
+
+  function angleFromClientPoint(evt, r) {
+    const rect = svg.getBoundingClientRect();
+    const scale = 320 / rect.width;
+    const px = (evt.clientX - rect.left) * scale;
+    const py = (evt.clientY - rect.top) * scale;
+    const dx = px - CX, dy = py - CY;
+    let deg = Math.atan2(dx, -dy) * 180 / Math.PI;
+    if (deg < 0) deg += 360;
+    return deg;
+  }
+
+  function makeTicks(groupId, r, cls) {
+    const g = document.getElementById(groupId);
+    [0, 15, 30, 45].forEach(v => {
+      const p = pointOnCircle(r, angleForValue(v));
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("cx", p.x);
+      c.setAttribute("cy", p.y);
+      c.setAttribute("r", 4.5);
+      c.dataset.value = v;
+      c.classList.add("tick", cls);
+      g.appendChild(c);
+    });
+    return Array.from(g.children);
+  }
+
+  const minTicks = makeTicks("minTicks", R_MIN, "min");
+  const secTicks = makeTicks("secTicks", R_SEC, "sec");
+
+  function updateTickVisibility(ticks, val) {
+    ticks.forEach(t => {
+      const d = Number(t.dataset.value);
+      let diff = Math.abs(val - d);
+      diff = Math.min(diff, 60 - diff);
+      t.classList.toggle("visible", diff <= 4);
+    });
+  }
+
+  function hideTicks(ticks) {
+    ticks.forEach(t => t.classList.remove("visible"));
+  }
+
+  class RingControl {
+    constructor(handleEl, hitringEl, ticks, radius, initial) {
+      this.handle = handleEl;
+      this.hitring = hitringEl;
+      this.ticks = ticks;
+      this.radius = radius;
+      this.value = initial;
+      this.dragging = false;
+      this.holdTimer = null;
+      this.onChange = null;
+
+      this.render(false);
+      this._bind();
+    }
+
+    render(pulse) {
+      const p = pointOnCircle(this.radius, angleForValue(this.value));
+      this.handle.setAttribute("cx", p.x);
+      this.handle.setAttribute("cy", p.y);
+      if (pulse) {
+        this.handle.classList.remove("snap");
+        void this.handle.offsetWidth;
+        this.handle.classList.add("snap");
+      }
+    }
+
+    setValue(v, notify) {
+      v = ((v % 60) + 60) % 60;
+      const changed = v !== this.value;
+      this.value = v;
+      this.render(changed);
+      if (changed && notify !== false && this.onChange) this.onChange(this.value);
+    }
+
+    _bind() {
+      const el = this.hitring;
+
+      el.addEventListener("pointerenter", e => {
+        if (el.hasPointerCapture && el.style.pointerEvents === "none") return;
+      });
+
+      el.addEventListener("pointermove", e => {
+        if (this.dragging) return;
+        if (el.classList.contains("locked")) return;
+        const deg = angleFromClientPoint(e, this.radius);
+        updateTickVisibility(this.ticks, deg / 6);
+      });
+
+      el.addEventListener("pointerleave", () => {
+        if (!this.dragging) hideTicks(this.ticks);
+      });
+
+      el.addEventListener("pointerdown", e => {
+        e.preventDefault();
+        el.setPointerCapture(e.pointerId);
+        clearTimeout(this.holdTimer);
+        this.holdTimer = setTimeout(() => {
+          this.dragging = true;
+          el.classList.add("dragging");
+        }, 130);
+      });
+
+      el.addEventListener("pointermove", e => {
+        if (!this.dragging) return;
+        const deg = angleFromClientPoint(e, this.radius);
+        const v = Math.round(deg / 6) % 60;
+        updateTickVisibility(this.ticks, deg / 6);
+        this.setValue(v, true);
+      });
+
+      const end = e => {
+        clearTimeout(this.holdTimer);
+        if (this.dragging) {
+          this.dragging = false;
+          el.classList.remove("dragging");
+          hideTicks(this.ticks);
+        }
+      };
+      el.addEventListener("pointerup", end);
+      el.addEventListener("pointercancel", end);
+    }
+  }
+
+  const minCtl = new RingControl(minHandle, minHitring, minTicks, R_MIN, 0);
+  const secCtl = new RingControl(secHandle, secHitring, secTicks, R_SEC, 0);
+
+  function updateCenterLabel() {
+    centerLabel.textContent = `${pad2(minCtl.value)}:${pad2(secCtl.value)}`;
+  }
+  minCtl.onChange = updateCenterLabel;
+  secCtl.onChange = updateCenterLabel;
+  updateCenterLabel();
+
+  function pickerTotalSeconds() {
+    return minCtl.value * 60 + secCtl.value;
+  }
+
+  function lockPicker(locked) {
+    svg.classList.toggle("locked", locked);
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Hourglass with Matter.js sand physics
+   * ---------------------------------------------------------------- */
+
+  const canvas = document.getElementById("hourglass");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+
+  const HCX = W / 2;
+  const Y_TOP = 46, Y_MID = 150, Y_BOTTOM = 254;
+  const OUTER_HALF = 96, NECK_HALF = 15;
+  const WALL_T = 6;
+
+  const { Engine, World, Bodies, Body, Composite } = Matter;
+
+  const engine = Engine.create();
+  engine.gravity.y = 1;
+  const world = engine.world;
+
+  function segmentWall(x1, y1, x2, y2, t) {
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    return Bodies.rectangle((x1 + x2) / 2, (y1 + y2) / 2, len, t, {
+      isStatic: true,
+      angle,
+      friction: 0.6,
+      render: { visible: false }
+    });
+  }
+
+  const topLeftWall = segmentWall(HCX - OUTER_HALF, Y_TOP, HCX - NECK_HALF, Y_MID, WALL_T);
+  const topRightWall = segmentWall(HCX + OUTER_HALF, Y_TOP, HCX + NECK_HALF, Y_MID, WALL_T);
+  const bottomLeftWall = segmentWall(HCX - NECK_HALF, Y_MID, HCX - OUTER_HALF, Y_BOTTOM, WALL_T);
+  const bottomRightWall = segmentWall(HCX + NECK_HALF, Y_MID, HCX + OUTER_HALF, Y_BOTTOM, WALL_T);
+  const floor = Bodies.rectangle(HCX, Y_BOTTOM + 4, OUTER_HALF * 2 + 12, 8, {
+    isStatic: true, friction: 0.6, render: { visible: false }
+  });
+
+  let gate = Bodies.rectangle(HCX, Y_MID, NECK_HALF * 2 + 2, 8, {
+    isStatic: true, render: { visible: false }
+  });
+
+  // safety net so a grain can never fly off past the glass silhouette
+  const guardLeft = Bodies.rectangle(HCX - OUTER_HALF - 14, H / 2, 8, H + 40, { isStatic: true, render: { visible: false } });
+  const guardRight = Bodies.rectangle(HCX + OUTER_HALF + 14, H / 2, 8, H + 40, { isStatic: true, render: { visible: false } });
+  const guardBottom = Bodies.rectangle(HCX, H + 20, OUTER_HALF * 4, 8, { isStatic: true, render: { visible: false } });
+
+  World.add(world, [topLeftWall, topRightWall, bottomLeftWall, bottomRightWall, floor, gate, guardLeft, guardRight, guardBottom]);
+
+  let grains = [];
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function computeSandPlan(totalSeconds) {
+    const secs = Math.max(1, totalSeconds);
+    const grainCount = clamp(secs, 6, 180);
+    const radius = clamp(200 / secs, 1.8, 5);
+    const dropIntervalMs = (secs * 1000) / grainCount;
+    return { grainCount, radius, dropIntervalMs };
+  }
+
+  let sandPlan = computeSandPlan(0);
+
+  function clearGrains() {
+    if (grains.length) Composite.remove(world, grains);
+    grains = [];
+  }
+
+  function topBulbHalfWidthAt(y) {
+    const t = clamp((y - Y_TOP) / (Y_MID - Y_TOP), 0, 1);
+    return OUTER_HALF + (NECK_HALF - OUTER_HALF) * t;
+  }
+
+  function spawnGrains(totalSeconds) {
+    clearGrains();
+    sandPlan = computeSandPlan(totalSeconds);
+    const { grainCount, radius } = sandPlan;
+
+    // spawn within the upper, roomier part of the top bulb, always inside the taper
+    const yLo = Y_TOP + radius + 6;
+    const yHi = Y_TOP + (Y_MID - Y_TOP) * 0.6;
+
+    for (let i = 0; i < grainCount; i++) {
+      const y = yLo + Math.random() * (yHi - yLo);
+      const hw = Math.max(radius + 1, topBulbHalfWidthAt(y) - radius - 3);
+      const x = HCX + (Math.random() - 0.5) * 2 * hw;
+      const g = Bodies.circle(x, y, radius, {
+        friction: 0.15,
+        frictionAir: 0.012,
+        restitution: 0.05,
+        density: 0.0018
+      });
+      g.sandShade = i % 2 === 0 ? "#e3bd85" : "#d4a565";
+      grains.push(g);
+    }
+    World.add(world, grains);
+  }
+
+  spawnGrains(0);
+
+  // gate cycling to pace the flow at roughly one grain per second
+  let nextDropAt = 0;
+  let gateReopenTimer = null;
+  let running = false;
+
+  function openGateBriefly(now) {
+    if (!Composite.get(world, gate.id, "body")) return;
+    World.remove(world, gate);
+    const openFor = Math.min(220, sandPlan.dropIntervalMs * 0.5);
+    clearTimeout(gateReopenTimer);
+    gateReopenTimer = setTimeout(() => {
+      World.add(world, gate);
+    }, openFor);
+    nextDropAt = now + sandPlan.dropIntervalMs;
+  }
+
+  function drawHourglass() {
+    ctx.clearRect(0, 0, W, H);
+
+    // glass frame
+    ctx.beginPath();
+    ctx.moveTo(HCX - OUTER_HALF, Y_TOP);
+    ctx.lineTo(HCX - NECK_HALF, Y_MID);
+    ctx.lineTo(HCX - OUTER_HALF, Y_BOTTOM);
+    ctx.lineTo(HCX + OUTER_HALF, Y_BOTTOM);
+    ctx.lineTo(HCX + NECK_HALF, Y_MID);
+    ctx.lineTo(HCX + OUTER_HALF, Y_TOP);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,253,248,.35)";
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "#cdbfa8";
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(HCX - OUTER_HALF, Y_TOP);
+    ctx.lineTo(HCX + OUTER_HALF, Y_TOP);
+    ctx.moveTo(HCX - OUTER_HALF, Y_BOTTOM);
+    ctx.lineTo(HCX + OUTER_HALF, Y_BOTTOM);
+    ctx.strokeStyle = "#cdbfa8";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    // sand grains
+    for (const g of grains) {
+      ctx.beginPath();
+      ctx.arc(g.position.x, g.position.y, g.circleRadius, 0, Math.PI * 2);
+      ctx.fillStyle = g.sandShade;
+      ctx.fill();
+    }
+  }
+
+  let lastTime = performance.now();
+  function loop(now) {
+    const dt = Math.min(32, now - lastTime);
+    lastTime = now;
+
+    Engine.update(engine, dt);
+
+    if (running && now >= nextDropAt) {
+      openGateBriefly(now);
+    }
+
+    drawHourglass();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  const Hourglass = {
+    start(totalSeconds) {
+      spawnGrains(totalSeconds);
+      running = true;
+      nextDropAt = performance.now() + sandPlan.dropIntervalMs;
+    },
+    pause() {
+      running = false;
+      clearTimeout(gateReopenTimer);
+      if (!Composite.get(world, gate.id, "body")) World.add(world, gate);
+    },
+    resume(remainingSeconds) {
+      sandPlan = computeSandPlan(Math.max(remainingSeconds, 1));
+      running = true;
+      nextDropAt = performance.now() + sandPlan.dropIntervalMs;
+    },
+    reset(totalSeconds) {
+      running = false;
+      clearTimeout(gateReopenTimer);
+      if (!Composite.get(world, gate.id, "body")) World.add(world, gate);
+      spawnGrains(totalSeconds);
+    }
+  };
+
+  /* ---------------------------------------------------------------- *
+   *  Timer controller
+   * ---------------------------------------------------------------- */
+
+  const startBtn = document.getElementById("startBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const statusText = document.getElementById("statusText");
+
+  let state = "idle"; // idle | running | paused | done
+  let remaining = 0;
+  let tickHandle = null;
+
+  function setCenterFromRemaining(sec) {
+    const mm = Math.floor(sec / 60);
+    const ss = sec % 60;
+    centerLabel.textContent = `${pad2(mm)}:${pad2(ss)}`;
+    minCtl.value = mm % 60;
+    secCtl.value = ss;
+    minCtl.render(false);
+    secCtl.render(false);
+  }
+
+  function tick() {
+    remaining -= 1;
+    if (remaining <= 0) {
+      remaining = 0;
+      setCenterFromRemaining(0);
+      finish();
+      return;
+    }
+    setCenterFromRemaining(remaining);
+  }
+
+  function finish() {
+    clearInterval(tickHandle);
+    tickHandle = null;
+    state = "done";
+    Hourglass.pause();
+    statusText.textContent = "終了しました";
+    refreshButtons();
+  }
+
+  function refreshButtons() {
+    startBtn.disabled = state === "running" || (state === "idle" && pickerTotalSeconds() === 0);
+    startBtn.textContent = state === "paused" ? "再開" : "開始";
+    pauseBtn.disabled = state !== "running";
+    resetBtn.disabled = state === "idle";
+  }
+
+  startBtn.addEventListener("click", () => {
+    if (state === "idle") {
+      const total = pickerTotalSeconds();
+      if (total <= 0) return;
+      remaining = total;
+      state = "running";
+      lockPicker(true);
+      statusText.textContent = "";
+      Hourglass.start(total);
+      tickHandle = setInterval(tick, 1000);
+    } else if (state === "paused") {
+      state = "running";
+      Hourglass.resume(remaining);
+      tickHandle = setInterval(tick, 1000);
+    }
+    refreshButtons();
+  });
+
+  pauseBtn.addEventListener("click", () => {
+    if (state !== "running") return;
+    state = "paused";
+    clearInterval(tickHandle);
+    tickHandle = null;
+    Hourglass.pause();
+    refreshButtons();
+  });
+
+  resetBtn.addEventListener("click", () => {
+    clearInterval(tickHandle);
+    tickHandle = null;
+    state = "idle";
+    remaining = 0;
+    statusText.textContent = "";
+    lockPicker(false);
+    setCenterFromRemaining(0);
+    minCtl.setValue(0, false);
+    secCtl.setValue(0, false);
+    updateCenterLabel();
+    Hourglass.reset(0);
+    refreshButtons();
+  });
+
+  minCtl.onChange = () => { updateCenterLabel(); refreshButtons(); };
+  secCtl.onChange = () => { updateCenterLabel(); refreshButtons(); };
+
+  refreshButtons();
+})();
+</script>
+</body>
+</html>
