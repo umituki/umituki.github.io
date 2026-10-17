@@ -199,23 +199,51 @@ const CONFIG = {
       { id: 'heavyBarrage',   name: '重砲撃隊',         members: ['thrower', 'artillery', 'train'], unlock: 25, weight: 1.0 },
       { id: 'clusterMedic',   name: '散弾回復隊',       members: ['artillery', 'scatter', 'heal', 'train'], unlock: 25, weight: 1.0 },
       { id: 'bombGuard',      name: '投擲護衛',         members: ['thrower', 'scatter', 'shooter'], unlock: 25, weight: 1.0 },
+      { id: 'expressRush',    name: '特急突撃',         members: ['train', 'train', 'train', 'train', 'train', 'speed', 'speed'], unlock: 25, weight: 1.2 },
+      { id: 'fastWing',       name: '高速側面隊',       members: ['train', 'train', 'train', 'train', 'shooter', 'speed'], unlock: 25, weight: 1.1 },
       // PHASE 30: 複数の高コスト敵が連携（上限22）
       { id: 'siege',          name: '包囲砲撃',         members: ['thrower', 'artillery', 'scatter', 'rare'], unlock: 30, weight: 1.0 },
       { id: 'doubleCannon',   name: '双砲陣',           members: ['artillery', 'artillery', 'scatter', 'heal'], unlock: 30, weight: 1.0 },
       { id: 'siegeHeal',      name: '投擲支援',         members: ['thrower', 'heal', 'scatter', 'train'], unlock: 30, weight: 1.0 },
+      { id: 'gunLine',        name: '集中砲列',         members: ['shooter', 'shooter', 'shooter', 'artillery', 'artillery'], unlock: 30, weight: 1.2 },
       // PHASE 35/40：より重い大型部隊（上限25/28）
       { id: 'armoredSiege',   name: '鉄壁包囲',         members: ['boss', 'artillery', 'scatter', 'train'], unlock: 35, weight: 1.0 },
       { id: 'doubleBattery',  name: '双砲支援',         members: ['artillery', 'artillery', 'scatter', 'heal', 'shooter'], unlock: 35, weight: 1.0 },
       { id: 'tripleThreat',   name: '三重脅威',         members: ['thrower', 'thrower', 'scatter'], unlock: 35, weight: 1.0 },
+      { id: 'fragmentStorm',  name: '散弾嵐',           members: ['scatter', 'scatter', 'scatter', 'scatter', 'train', 'train'], unlock: 35, weight: 1.3 },
+      { id: 'fragmentEscort', name: '散弾前衛',        members: ['scatter', 'scatter', 'scatter', 'shooter', 'train', 'train'], unlock: 35, weight: 1.1 },
       { id: 'heavyConvoy',    name: '重装車列',         members: ['thrower', 'thrower', 'artillery', 'train'], unlock: 40, weight: 1.0 },
       { id: 'siegeFormation', name: '攻城編隊',         members: ['thrower', 'artillery', 'scatter', 'heal', 'train'], unlock: 40, weight: 1.0 },
       { id: 'tripleCannon',   name: '三連砲隊',         members: ['artillery', 'artillery', 'artillery', 'heal', 'heal'], unlock: 40, weight: 1.0 },
+      { id: 'mixedAssault',   name: '複合攻城',         members: ['boss', 'artillery', 'scatter', 'shooter', 'train'], unlock: 40, weight: 1.25 },
+      { id: 'mixedPincer',    name: '挟撃部隊',         members: ['boss', 'thrower', 'heal', 'train'], unlock: 40, weight: 1.15 },
     ],
     setChanceStart: 5,           // フェーズ1〜4はセット召喚を一切行わない
     setChanceBase: 0.12,
     setChancePerPhase: 0.05,
     setChanceMax: 0.45,
     setOldTierWeight: 0.74,      // 新しい段階が出たら、以前のセットの抽選重みは段階差ごとに0.74倍
+    // PHASE20以降：5フェーズごとに敵の戦術テーマを循環させる。出現禁止・解禁条件は常に優先。
+    themeCycle: [
+      { id: 'heavy',   name: '重装侵攻',   weights: { boss: 3.6, heal: 2.2, artillery: 1.2, train: 0.65, speed: 0.6, scatter: 0.75 } },
+      { id: 'fast',    name: '高速侵攻',   weights: { train: 3.4, speed: 2.2, scatter: 1.3, rare: 1.3, boss: 0.5, thrower: 0.6, artillery: 0.7 } },
+      { id: 'ranged',  name: '遠距離制圧', weights: { shooter: 2.7, artillery: 3.3, thrower: 2.4, train: 0.65, speed: 0.7, boss: 0.65 } },
+      { id: 'scatter', name: '散弾連鎖',   weights: { scatter: 3.7, train: 1.6, speed: 1.35, shooter: 0.8, boss: 0.5, thrower: 0.65 } },
+      { id: 'mixed',   name: '複合侵攻',   weights: { boss: 1.6, artillery: 1.7, thrower: 1.6, scatter: 1.8, heal: 1.3, train: 1.3 } },
+    ],
+    themeAffinity: { // セット内容を評価し、テーマに沿った強力な編成を優先
+      heavy:   { boss: 3.5, heal: 2.1, artillery: 1.2, shooter: 0.9 },
+      fast:    { train: 3, speed: 2.5, scatter: 1.0, rare: 1.3 },
+      ranged:  { shooter: 2.5, artillery: 3.5, thrower: 3, heal: 0.8 },
+      scatter: { scatter: 4, train: 1.5, speed: 1.0 },
+      mixed:   { boss: 2, scatter: 2, artillery: 2, thrower: 2, heal: 1.5, train: 1.2 },
+    },
+    // 同フェーズ内：序盤は小出し、中盤にセット増加、終盤に主力セット。
+    // たまに序盤に主力セットを置く変化球も混ぜる（再挑戦時にもシードで再現可能）。
+    openingSetChance: 0.10,
+    pressureSetChance: 0.72,
+    finaleSetChance: 0.68,
+    earlySurgeChance: 0.28,
     seed: null,                  // 数値を入れると毎回同じ召喚予定になる（テスト用）。null なら毎回ランダム
   },
 
@@ -519,6 +547,25 @@ const Difficulty = {
     }
     return tiers[tiers.length - 1].scale;
   },
+  themeForPhase(phase) {
+    if (phase < 20) return null;
+    const cycle = CONFIG.waves.themeCycle;
+    return cycle[Math.floor((phase - 20) / 5) % cycle.length];
+  },
+  // 抽選重みだけを調整する。敵の個別性能や解禁時期は変化させない。
+  themedSingleWeight(type, phase) {
+    const theme = this.themeForPhase(phase);
+    return this.singleWeight(type, phase) * (theme?.weights[type] ?? 1);
+  },
+  setThemeScore(members, theme) {
+    if (!theme) return 1;
+    const affinity = CONFIG.waves.themeAffinity[theme.id];
+    const total = members.reduce((s, type) => s + ENEMY_DEFS[type].cost, 0);
+    if (total === 0) return 0;
+    const weighted = members.reduce((sum, type) => sum + ENEMY_DEFS[type].cost * (affinity[type] ?? 0.25), 0) / total;
+    // 複合型では役割が異なる敵を組み合わせた編成を評価する。
+    return theme.id === 'mixed' ? weighted * (0.6 + Math.min(5, new Set(members).size) * 0.12) : weighted;
+  },
   // 各フェーズでの単体召喚重み。解禁前の敵はWavePlanner側で除外する。
   singleWeight(type, phase) {
     const w = CONFIG.waves;
@@ -562,12 +609,33 @@ const WavePlanner = {
   futureSets(phase) {
     const out = [];
     const gap = 6, maxWidth = CONFIG.screen.width - 8;
-    const patterns = [
-      ['thrower', 'artillery', 'scatter', 'heal', 'boss', 'shooter', 'train', 'rare'],
-      ['artillery', 'heal', 'thrower', 'scatter', 'boss', 'shooter', 'train', 'rare'],
-    ];
+    // 45以降も、その5フェーズのテーマに沿ったセットを2種類ずつ新解禁する。
+    // 高速型は低コスト多体、重装・遠距離型は高コスト少数で個性を保つ。
+    const themePools = {
+      heavy: [
+        ['boss', 'heal', 'boss', 'artillery', 'scatter', 'shooter', 'train', 'rare'],
+        ['boss', 'boss', 'heal', 'scatter', 'artillery', 'train', 'shooter', 'rare'],
+      ],
+      fast: [
+        ['train', 'train', 'speed', 'scatter', 'shooter', 'rare'],
+        ['train', 'speed', 'train', 'scatter', 'speed', 'shooter', 'rare'],
+      ],
+      ranged: [
+        ['thrower', 'artillery', 'shooter', 'heal', 'scatter', 'train', 'rare'],
+        ['artillery', 'shooter', 'thrower', 'artillery', 'heal', 'scatter', 'rare'],
+      ],
+      scatter: [
+        ['scatter', 'scatter', 'train', 'shooter', 'speed', 'artillery', 'rare'],
+        ['scatter', 'train', 'scatter', 'heal', 'shooter', 'speed', 'rare'],
+      ],
+      mixed: [
+        ['boss', 'artillery', 'scatter', 'thrower', 'heal', 'shooter', 'train', 'rare'],
+        ['thrower', 'boss', 'heal', 'scatter', 'artillery', 'train', 'shooter', 'rare'],
+      ],
+    };
     for (let unlock = 45; unlock <= phase; unlock += 5) {
       const cap = Difficulty.eventCap(unlock);
+      const patterns = themePools[Difficulty.themeForPhase(unlock).id];
       for (let v = 0; v < patterns.length; v++) {
         const pool = patterns[v];
         const members = [], count = {};
@@ -595,12 +663,13 @@ const WavePlanner = {
   },
   plan(phase, rng) {
     const w = CONFIG.waves;
-    let budget = Difficulty.forPhase(phase).budget;
-    const events = [];
+    const totalBudget = Difficulty.forPhase(phase).budget;
     const setChance = Difficulty.setChance(phase);
     const cap = Difficulty.eventCap(phase);
-    // フェーズ内で変わらないセット候補と重みは先に1回だけ計算する。
+    const theme = Difficulty.themeForPhase(phase);
+    const events = [];
     const tier = Math.floor((phase - w.setChanceStart) / 5);
+    // 解禁済みのセット候補。旧セットに含まれるノーマル・タンクも段階で置換する。
     const availableSets = w.sets.concat(this.futureSets(phase))
       .filter(st => st.unlock <= phase)
       .map(st => {
@@ -610,31 +679,80 @@ const WavePlanner = {
           return t;
         });
         const age = tier - Math.floor((st.unlock - w.setChanceStart) / 5);
-        return { ...st, members, cost: members.reduce((c, m) => c + ENEMY_DEFS[m].cost, 0),
-          weight: st.weight * Math.pow(w.setOldTierWeight, Math.max(0, age)) };
+        const cost = members.reduce((c, m) => c + ENEMY_DEFS[m].cost, 0);
+        const themeScore = Difficulty.setThemeScore(members, theme);
+        return { ...st, members, cost, themeScore,
+          weight: st.weight * Math.pow(w.setOldTierWeight, Math.max(0, age))
+            * (theme ? Math.pow(themeScore, 2) : 1) };
       });
+
+    // PHASE20以降は、毎フェーズ必ずテーマを象徴するセットを1回組み込む。
+    // 予算を事前に確保し、イベント全体のコスト合計を変えない。
+    let signature = null;
+    const earlySurge = !!theme && rng() < w.earlySurgeChance;
+    if (theme) {
+      const eligible = availableSets.filter(st => st.cost <= cap && st.cost <= totalBudget && st.members.length >= 2);
+      if (eligible.length) {
+        const scored = eligible.map(st => ({ st,
+          score: st.themeScore * 2 + Math.min(1, st.cost / cap) * 1.2
+            + Math.min(0.45, Math.max(0, st.unlock - (phase - 10)) * 0.045) }));
+        scored.sort((a, b) => b.score - a.score);
+        // 上位3候補から選び、毎フェーズ同じ編成だけになることを避ける。
+        const pick = scored[Math.floor(rng() * Math.min(3, scored.length))].st;
+        signature = { members: pick.members.slice(), cost: pick.cost, set: pick.id,
+          formation: 'layered', act: earlySurge ? 'opening' : 'finale', signature: true };
+      }
+    }
+    let budget = totalBudget - (signature?.cost ?? 0);
+    const freeBudget = budget;
+
+    const setGap = (ev, act) => {
+      const actScale = !theme ? 1 : earlySurge
+        ? ({ opening: 0.93, pressure: 1.03, finale: 0.87 }[act])
+        : ({ opening: 1.13, pressure: 0.84, finale: 0.73 }[act]);
+      ev.gap = (w.intervalBase + w.intervalPerCost * ev.cost)
+        * Difficulty.spawnIntervalScale(phase) * actScale
+        * (1 + w.intervalJitter * (rng() * 2 - 1));
+    };
+    if (signature && earlySurge) {
+      setGap(signature, 'opening');
+      events.push(signature);
+    }
     while (budget > 0) {
-      const limit = Math.min(cap, budget);           // 1回の召喚で使えるコスト
-      const sets = availableSets.filter(st => st.cost <= limit); // 上限超過セットは分割しない
+      const limit = Math.min(cap, budget);
+      const spentFraction = freeBudget > 0 ? (freeBudget - budget) / freeBudget : 1;
+      const act = !theme ? null : spentFraction < 0.24 ? 'opening'
+        : spentFraction < 0.70 ? 'pressure' : 'finale';
+      const chance = !theme ? setChance
+        : act === 'opening' ? w.openingSetChance
+        : act === 'pressure' ? w.pressureSetChance
+        : earlySurge ? 0.36 : w.finaleSetChance;
+      const sets = availableSets.filter(st => st.cost <= limit && st.weight > 0);
       const singles = Object.keys(ENEMY_DEFS)
-        .filter(t => ENEMY_DEFS[t].unlock <= phase && ENEMY_DEFS[t].cost <= limit && Difficulty.singleWeight(t, phase) > 0)
-        .map(t => ({ type: t, weight: Difficulty.singleWeight(t, phase), cost: ENEMY_DEFS[t].cost }));
+        .filter(t => ENEMY_DEFS[t].unlock <= phase && ENEMY_DEFS[t].cost <= limit && Difficulty.themedSingleWeight(t, phase) > 0)
+        .map(t => ({ type: t, weight: Difficulty.themedSingleWeight(t, phase), cost: ENEMY_DEFS[t].cost }));
       let ev;
-      if (sets.length && rng() < setChance) {
+      if (sets.length && rng() < chance) {
         const st = this.weighted(sets, rng);
-        ev = { members: st.members.slice(), cost: st.cost, set: st.id };
+        ev = { members: st.members.slice(), cost: st.cost, set: st.id,
+          formation: theme ? 'layered' : 'line', act };
       } else if (singles.length) {
         const sg = this.weighted(singles, rng);
-        ev = { members: [sg.type], cost: sg.cost, set: null };
+        ev = { members: [sg.type], cost: sg.cost, set: null, formation: 'line', act };
       } else {
-        break;                                       // 予算内で召喚できる敵がない（フェーズ9まではノーマル、10以降はレアのコスト1があるので通常は起きない）
+        break; // 通常は発生しない：コスト1の敵（ノーマル・レア）が常に存在する
       }
-      ev.gap = (w.intervalBase + w.intervalPerCost * ev.cost)
-        * Difficulty.spawnIntervalScale(phase) * (1 + w.intervalJitter * (rng() * 2 - 1));
+      setGap(ev, act);
       budget -= ev.cost;
       events.push(ev);
     }
-    return { events, budget: Difficulty.forPhase(phase).budget, leftover: budget, cap };
+    if (signature && !earlySurge) {
+      setGap(signature, 'finale');
+      events.push(signature);
+    }
+    return { events, budget: totalBudget, leftover: budget, cap,
+      theme: theme?.id ?? null, themeName: theme?.name ?? null,
+      pattern: theme ? (earlySurge ? 'earlySurge' : 'climax') : 'classic' };
   },
 };
 
@@ -1861,21 +1979,41 @@ class EnemySpawner {
       this.timer += ev.gap;                           // 召喚した直後に次のタイマーを設定
     }
   }
-  // セットは横一列に、互いに重ならない間隔で並べて同時に出す
+  // 高フェーズのセットは前衛・後衛に分ける。各列とも6px以上の間隔を確保する。
+  // 役割に応じて初期位置をずらすだけで、各敵のAI/速度/物理演算は変更しない。
   spawnEvent(ev, game) {
     const gap = 6;
-    const widths = ev.members.map(t => ENEMY_DEFS[t].radius * 2);
-    const total = widths.reduce((a, b) => a + b, 0) + gap * (ev.members.length - 1);
-    const left = BATTLE.left + 4, right = BATTLE.right - 4 - total;
-    let x = left + this.rng() * Math.max(0, right - left);
+    const layered = ev.formation === 'layered' && ev.members.length > 1;
+    const rearTypes = new Set(['shooter', 'artillery', 'thrower', 'heal']);
+    const indices = ev.members.map((_, i) => i);
+    const front = layered ? indices.filter(i => !rearTypes.has(ev.members[i])) : indices;
+    const rear = layered ? indices.filter(i => rearTypes.has(ev.members[i])) : [];
+    const rowWidth = row => row.reduce((sum, i) => sum + 2 * ENEMY_DEFS[ev.members[i]].radius, 0)
+      + Math.max(0, row.length - 1) * gap;
+    const maxWidth = Math.max(rowWidth(front), rowWidth(rear));
+    const leftBound = BATTLE.left + 4, rightBound = BATTLE.right - 4;
+    const centerX = leftBound + maxWidth / 2
+      + this.rng() * Math.max(0, rightBound - leftBound - maxWidth);
+    const slots = new Array(ev.members.length);
+    const frontMaxR = front.length ? Math.max(...front.map(i => ENEMY_DEFS[ev.members[i]].radius)) : 0;
+    const rearMaxR = rear.length ? Math.max(...rear.map(i => ENEMY_DEFS[ev.members[i]].radius)) : 0;
+    const frontY = rear.length ? BATTLE.top + frontMaxR + rearMaxR + gap + 8 : null;
+    for (const [row, isFront] of [[front, true], [rear, false]]) {
+      let x = centerX - rowWidth(row) / 2;
+      for (const i of row) {
+        const d = ENEMY_DEFS[ev.members[i]];
+        slots[i] = { x: x + d.radius,
+          y: isFront && frontY !== null ? frontY : BATTLE.top - d.radius };
+        x += 2 * d.radius + gap;
+      }
+    }
     ev.spawnedAt = [];
     ev.members.forEach((t, i) => {
-      const d = ENEMY_DEFS[t];
-      const e = new Enemy(t, x + d.radius, BATTLE.top - d.radius);
+      const spot = slots[i];
+      const e = new Enemy(t, spot.x, spot.y);
       game.enemies.push(e);
       ev.spawnedAt.push(e);
       this.spawned++;
-      x += widths[i] + gap;
     });
   }
 }
@@ -4281,6 +4419,8 @@ const Renderer = {
       const nx = Difficulty.forPhase(g.phase + 1);
       this.txt(`持ち越しコスト：${Math.floor(g.cost.value)}`, W / 2, 474, 18, PALETTE.yellow, CENTER, CENTER);
       this.txt(`次のフェーズ：敵の予算 ${nx.budget}／同時召喚上限 ${Difficulty.eventCap(g.phase + 1)}`, W / 2, 506, 13, PALETTE.silver, CENTER, CENTER);
+      const nextTheme = Difficulty.themeForPhase(g.phase + 1);
+      if (nextTheme) this.txt(`次の戦術テーマ：${nextTheme.name}`, W / 2, 530, 13, PALETTE.peach, CENTER, CENTER);
     } else if (g.state === 'gameover') {
       this.txt('ゲームオーバー', W / 2, 392, 32, PALETTE.red, CENTER, CENTER);
       this.txt(`フェーズ ${pad2(g.phase)} で突破が上限に達した`, W / 2, 440, 15, PALETTE.white, CENTER, CENTER);
