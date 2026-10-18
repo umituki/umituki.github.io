@@ -148,6 +148,7 @@ const CONFIG = {
   },
 
   phase: {
+    retryLimit: 3,              // フェーズ再挑戦は最大3回。クリアすると全回復
     breachLimit: 10,             // 全フェーズ累計での突破上限（次フェーズへ引き継ぐ）
     initialCost: 10,             // 新しいゲームの開始時だけ付与。以後のフェーズは前のフェーズの残りを引き継ぐ
     firstSpawnDelay: 1.5,        // フェーズ開始から最初の召喚まで
@@ -2985,6 +2986,7 @@ class Game {
     this.spawner.reset(1, makeRng(1));
     this.breaches = 0;
     this.phaseStartBreaches = 0; // 再挑戦時に復元する、そのフェーズ開始時の突破数
+    this.retriesRemaining = CONFIG.phase.retryLimit;  // クリアで回復。ゲームオーバーから再挑戦で1回消費
     this.kills = 0;
     this.battleTime = 0;
     this.chainSerial = 0;
@@ -3067,6 +3069,10 @@ class Game {
   // mode：'new' = 新しいゲーム（初期コスト）、'next' = 次のフェーズ（今のコストを引き継ぐ）、
   //       'retry' = 同じフェーズの再挑戦（そのフェーズ開始時のコストに戻す）
   startPhase(n, mode = 'new') {
+    // 残り0回での再挑戦は、直接呼び出されてもゲーム状態を変更しない。
+    if (mode === 'retry' && this.retriesRemaining <= 0) return false;
+    if (mode === 'new') this.retriesRemaining = CONFIG.phase.retryLimit;
+    if (mode === 'retry') this.retriesRemaining--;
     this.phase = n;
     this.params = Difficulty.forPhase(n);
     this.allies = [];
@@ -3106,6 +3112,7 @@ class Game {
     this.hitstopRemaining = 0;
     Sound.stopSfx();                                     // 前のフェーズの戦闘音を止める（ファンファーレは途切れさせない）
     this.setState('playing');
+    return true;
   }
 
   setState(s) {
@@ -3239,6 +3246,7 @@ class Game {
     if (this.spawner.done && this.enemies.length === 0 &&
         this.enemyBombs.length === 0 && this.scatterShards.length === 0) {
       // クリア時も場に残った弾・波紋の余韻を0.7秒間見せる。
+      this.retriesRemaining = CONFIG.phase.retryLimit; // フェーズクリア時にリトライ回数を全回復
       this.setState('cleared');
       Sound.fanfare();                                   // 1回のクリアにつき1回（状態が変わるのはここだけ）
     }
@@ -3634,7 +3642,10 @@ const UI = {
       case 'title':    return [{ ...this.button, label: 'デッキ編成・スタート', action: g => g.openDeckEditor(1, 'new', 'title') }];
       case 'cleared':  return [{ ...this.button, label: game.phase % 5 === 0 ? 'デッキ編成へ' : '次のフェーズへ',
         action: g => g.phase % 5 === 0 ? g.openDeckEditor(g.phase + 1, 'next', 'cleared') : g.startPhase(g.phase + 1, 'next') }];
-      case 'gameover': return [{ ...this.button, label: 'このフェーズを再挑戦', action: g => g.startPhase(g.phase, 'retry') },
+      case 'gameover': return [{ ...this.button,
+                                 label: game.retriesRemaining > 0 ? 'このフェーズを再挑戦' : 'リトライ回数なし',
+                                 disabled: game.retriesRemaining <= 0,
+                                 action: g => g.startPhase(g.phase, 'retry') },
                                { ...this.restartButton, label: '最初から', action: g => g.openDeckEditor(1, 'new', 'gameover') }];
       default: return [];
     }
@@ -3769,7 +3780,10 @@ const UI = {
     if (!list.length) return false;
     if (game.stateTime > 0.25) {
       const btn = list.find(b => this.hit(b, x, y));
-      if (btn) { btn.action(game); Sound.ui('confirm'); }
+      if (btn) {
+        if (btn.disabled) Sound.ui('deny');
+        else { btn.action(game); Sound.ui('confirm'); }
+      }
     }
     return true;
   },
@@ -4896,7 +4910,18 @@ const Renderer = {
       const y0 = 110, y1 = g.state === 'gameover' ? 228 : 214;
       Pix.frame(19, y0, LW - 38, y1 - y0, PALETTE.white, PALETTE.black, PALETTE.slate);
     }
-    for (const b of UI.buttons(g)) Pix.frame(q(b.x), q(b.y), q(b.w), q(b.h), PALETTE.white, PALETTE.navy);
+    if (g.state === 'gameover') {
+      // 再挑戦の残数を3個のドット目盛りでも表示（数値は文字層に描画）。
+      const total = CONFIG.phase.retryLimit;
+      const tickW = 12, tickH = 3, gap = 4;
+      const start = Math.round((LW - (total * tickW + (total - 1) * gap)) / 2);
+      for (let i = 0; i < total; i++) {
+        Pix.rect(start + i * (tickW + gap), q(533), tickW, tickH,
+          i < g.retriesRemaining ? PALETTE.green : PALETTE.slate);
+      }
+    }
+    for (const b of UI.buttons(g)) Pix.frame(q(b.x), q(b.y), q(b.w), q(b.h),
+      b.disabled ? PALETTE.slate : PALETTE.white, b.disabled ? PALETTE.black : PALETTE.navy);
   },
 
   /* ---------- 文字層（等倍・ドットフォント） ---------- */
@@ -5046,12 +5071,15 @@ const Renderer = {
       this.txt('ゲームオーバー', W / 2, 392, 32, PALETTE.red, CENTER, CENTER);
       this.txt(`フェーズ ${pad2(g.phase)} で突破が上限に達した`, W / 2, 440, 15, PALETTE.white, CENTER, CENTER);
       this.txt(`撃破 ${pad2(g.kills)}`, W / 2, 470, 14, PALETTE.silver, CENTER, CENTER);
-      this.txt(`再挑戦はこのフェーズ開始時のコスト${Math.floor(g.phaseStartCost ?? 0)}から`, W / 2, 500, 13, PALETTE.silver, CENTER, CENTER);
+      this.txt(`再挑戦はフェーズ開始時のコスト${Math.floor(g.phaseStartCost ?? 0)}から`, W / 2, 493, 13, PALETTE.silver, CENTER, CENTER);
+      this.txt(`リトライ残り ${g.retriesRemaining}/${CONFIG.phase.retryLimit}`, W / 2, 519, 17,
+        g.retriesRemaining > 0 ? PALETTE.green : PALETTE.red, CENTER, CENTER);
     }
     UI.buttons(g).forEach((b, i) => {
       const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-      this.txt(b.label, cx + 10, cy, i === 0 ? 18 : 16, PALETTE.white, CENTER, CENTER);
-      if (i === 0 && this.blink(2.5)) {
+      this.txt(b.label, cx + 10, cy, i === 0 ? 18 : 16,
+        b.disabled ? PALETTE.slate : PALETTE.white, CENTER, CENTER);
+      if (i === 0 && !b.disabled && this.blink(2.5)) {
         textSize(18);
         this.txt('▶', cx + 10 - textWidth(b.label) / 2 - 22, cy, 16, PALETTE.yellow, CENTER, CENTER);
       }
