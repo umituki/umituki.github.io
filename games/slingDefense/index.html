@@ -319,6 +319,10 @@ const CONFIG = {
     resetOnPhaseStart: true,     // フェーズ開始・再挑戦時にデッキを組み直す
     nextCount: 3,
     size: 8,
+    maxTypes: 8,                 // 1周で獲得できるユニットは重複込みで最大8枠
+    choiceInterval: 2,          // 2フェーズクリアごとに新しいユニットを追加
+    choiceCount: 3,             // 各獲得機会は3択
+    rerollsPerChoice: 1,        // 3択1回ごとにリロールは最大1回
   },
 };
 
@@ -784,8 +788,31 @@ const WavePlanner = {
 };
 
 /* =====================================================================
- * 4. Deck — シャッフル供給とNEXT先読み（種類が増えても処理は不変）
+ * 4. Deck — 獲得した8枠（同種の重複可）からデッキを自動構成してシャッフル供給
  * ===================================================================== */
+const UnitDraft = {
+  // 開始時は単体でも攻撃可能なユニットに限定し、補助ユニットだけで詰まるのを避ける。
+  starterTypes: ['normal', 'steel', 'iron', 'rare', 'bomb', 'ice'],
+  available(picked, first = false) {
+    const candidates = first ? this.starterTypes : Object.keys(UNIT_DEFS);
+    // 獲得済みの種類も再び候補になる。同じ種類を選ぶとデッキ内の枚数が増える。
+    return candidates.filter(type => UNIT_DEFS[type]);
+  },
+  // 再抽選では直前と違うユニットを優先する。枠が足りなければ旧候補から補充。
+  choices(picked, previous = [], first = false, rng = Math.random) {
+    const pool = this.available(picked, first);
+    const fresh = Util.shuffle(pool.filter(type => !previous.includes(type)), rng);
+    const old = Util.shuffle(pool.filter(type => previous.includes(type)), rng);
+    return [...fresh, ...old].slice(0, CONFIG.deck.choiceCount);
+  },
+  counts(picked) {
+    const out = Object.fromEntries(Object.keys(UNIT_DEFS).map(type => [type, 0]));
+    if (!picked.length) return out;
+    // 選択履歴の各枠に同じ重みを与える。重複選択した種類ほどデッキの枚数が増える。
+    for (let i = 0; i < CONFIG.deck.size; i++) out[picked[i % picked.length]]++;
+    return out;
+  },
+};
 const DeckRules = {
   typeCap(phase) { return Math.min(8, 4 + Math.floor((Math.max(1, phase) - 1) / 5)); },
   validate(counts, phase) {
@@ -2814,7 +2841,7 @@ const Sound = {
     const m = this.music;
     // メニュー・デッキ編集・戦闘・結果・設定のすべてでBGMを流し続ける。
     // ブラウザが起動直後の自動再生を禁止した場合、最初の操作で音声を再開する。
-    if (!['title', 'deckedit', 'playing', 'settings', 'cleared', 'gameover'].includes(state)
+    if (!['title', 'unitselect', 'playing', 'settings', 'cleared', 'gameover'].includes(state)
         || this.muted || (typeof document !== 'undefined' && document.hidden)) {
       if (m.playing) this.stopBgm();
       return;
@@ -2970,7 +2997,14 @@ class Game {
     this.effects = [];
     this.trails = [];
     this.cost = new CostManager(CONFIG.cost);
-    this.deckCounts = DeckRules.normalize(CONFIG.deck.composition);
+    this.acquiredTypes = [];                  // この周回で選んだユニットの履歴（重複可、最大8枠）
+    this.choiceCandidates = [];
+    this.choiceRerolls = 0;
+    this.choiceTargetPhase = 1;
+    this.choiceMode = 'new';
+    this.choiceReturn = 'title';
+    // 画面遷移直後の描画でも常に有効なデッキを持つ。開始時の3択を確定するまで射出不可。
+    this.deckCounts = UnitDraft.counts(['normal']);
     this.deck = new Deck(DeckRules.expand(this.deckCounts));
     this.deckDraft = null;
     this.deckReturn = null;
@@ -3021,57 +3055,73 @@ class Game {
     return true;
   }
 
-  // 設定画面から最初からやり直す。実行前の確認を必須とし、
-  // 既存のゲームオーバー画面と同じくフェーズ1のデッキ編成へ進む。
+  // 設定画面から最初からやり直す。開始時の3択から選び直す。
   restartFromSettings() {
     if (this.state !== 'settings' || !this.settingsRestartConfirm) return false;
     this.settingsRestartConfirm = false;
     this.settingsReturn = null;
     this.settingsReturnTime = 0;
     this.setState('title');  // 現フェーズを破棄し、編集取消時も戦闘には戻さない
-    return this.openDeckEditor(1, 'new', 'title');
+    return this.openUnitSelection(1, 'new', 'title');
   }
 
-  openDeckEditor(targetPhase, mode, fromState) {
+  // ユニット選択：新規ゲームは開始前、以後は偶数フェーズのクリア直後に開く。
+  openUnitSelection(targetPhase, mode = 'next', fromState = this.state) {
     if (this.state === 'playing' || this.launcher.aiming) return false;
-    this.deckTargetPhase = targetPhase;
-    this.deckNextMode = mode;
-    this.deckReturn = fromState || this.state;
-    this.deckDraft = { ...this.deckCounts };
-    this.deckSelected = 'normal';
-    this.setState('deckedit');
+    if (mode === 'new') this.acquiredTypes = [];
+    if (this.acquiredTypes.length >= CONFIG.deck.maxTypes) return false;
+    this.choiceTargetPhase = targetPhase;
+    this.choiceMode = mode;
+    this.choiceReturn = fromState;
+    this.choiceRerolls = CONFIG.deck.rerollsPerChoice;
+    this.choiceCandidates = UnitDraft.choices(this.acquiredTypes, [], mode === 'new');
+    if (!this.choiceCandidates.length) return false;
+    this.setState('unitselect');
     return true;
   }
-  editDeck(type, delta) {
-    if (this.state !== 'deckedit' || !(type in this.deckDraft)) return false;
-    const amount = this.deckDraft[type] + delta;
-    if (amount < 0 || amount > CONFIG.deck.size) return false;
-    if (delta > 0 && this.deckDraftTotal() >= CONFIG.deck.size) return false;
-    if (delta > 0 && this.deckDraft[type] === 0 && this.deckDraftTypes() >= DeckRules.typeCap(this.deckTargetPhase)) return false;
-    this.deckDraft[type] = amount;
-    this.deckSelected = type;                            // ＋／−で個数を変えたユニットを選択する
+
+  canRerollUnitSelection() {
+    if (this.state !== 'unitselect' || this.choiceRerolls <= 0) return false;
+    return UnitDraft.available(this.acquiredTypes, this.choiceMode === 'new')
+      .some(type => !this.choiceCandidates.includes(type));
+  }
+
+  rerollUnitSelection() {
+    if (!this.canRerollUnitSelection()) return false;
+    this.choiceCandidates = UnitDraft.choices(
+      this.acquiredTypes, this.choiceCandidates, this.choiceMode === 'new');
+    this.choiceRerolls--;
     return true;
   }
-  deckDraftTotal() { return Object.values(this.deckDraft).reduce((s, n) => s + n, 0); }
-  deckDraftTypes() { return Object.values(this.deckDraft).filter(n => n > 0).length; }
-  confirmDeck() {
-    if (this.state !== 'deckedit' || !DeckRules.validate(this.deckDraft, this.deckTargetPhase)) return false;
-    this.deckCounts = { ...this.deckDraft };
+
+  chooseUnit(type) {
+    if (this.state !== 'unitselect' || !this.choiceCandidates.includes(type) ||
+        this.acquiredTypes.length >= CONFIG.deck.maxTypes) return false;
+    this.acquiredTypes.push(type);
+    this.deckCounts = UnitDraft.counts(this.acquiredTypes);
     this.deck = new Deck(DeckRules.expand(this.deckCounts));
-    this.startPhase(this.deckTargetPhase, this.deckNextMode);
-    return true;
+    this.choiceCandidates = [];
+    return this.startPhase(this.choiceTargetPhase, this.choiceMode);
   }
-  cancelDeck() {
-    if (this.state !== 'deckedit') return false;
-    this.setState(this.deckReturn || 'title');
-    return true;
+
+  // 前フェーズからのコスト／突破数を維持しつつ次のフェーズへ。
+  nextPhase() {
+    if (this.state !== 'cleared' || this.stateTime < CONFIG.result.overlayDelay) return false;
+    const shouldPick = this.phase % CONFIG.deck.choiceInterval === 0 &&
+      this.acquiredTypes.length < CONFIG.deck.maxTypes;
+    return shouldPick
+      ? this.openUnitSelection(this.phase + 1, 'next', 'cleared')
+      : this.startPhase(this.phase + 1, 'next');
   }
+
   // mode：'new' = 新しいゲーム（初期コスト）、'next' = 次のフェーズ（今のコストを引き継ぐ）、
   //       'retry' = 同じフェーズの再挑戦（そのフェーズ開始時のコストに戻す）
   startPhase(n, mode = 'new') {
     // 残り0回での再挑戦は、直接呼び出されてもゲーム状態を変更しない。
     if (mode === 'retry' && this.retriesRemaining <= 0) return false;
     if (mode === 'new') this.retriesRemaining = CONFIG.phase.retryLimit;
+    // 戦闘は必ず確定済みの種類のみ。新規挑戦の最初には3択の確定が必要。
+    if (!this.acquiredTypes.length) return false;
     if (mode === 'retry') this.retriesRemaining--;
     this.phase = n;
     this.params = Difficulty.forPhase(n);
@@ -3639,14 +3689,15 @@ const UI = {
     if ((game.state === 'cleared' || game.state === 'gameover') &&
         game.stateTime < CONFIG.result.overlayDelay) return [];
     switch (game.state) {
-      case 'title':    return [{ ...this.button, label: 'デッキ編成・スタート', action: g => g.openDeckEditor(1, 'new', 'title') }];
-      case 'cleared':  return [{ ...this.button, label: game.phase % 5 === 0 ? 'デッキ編成へ' : '次のフェーズへ',
-        action: g => g.phase % 5 === 0 ? g.openDeckEditor(g.phase + 1, 'next', 'cleared') : g.startPhase(g.phase + 1, 'next') }];
+      case 'title':    return [{ ...this.button, label: 'スタート・ユニット選択', action: g => g.openUnitSelection(1, 'new', 'title') }];
+      case 'cleared':  return [{ ...this.button,
+        label: game.phase % CONFIG.deck.choiceInterval === 0 && game.acquiredTypes.length < CONFIG.deck.maxTypes
+          ? 'ユニットを追加' : '次のフェーズへ', action: g => g.nextPhase() }];
       case 'gameover': return [{ ...this.button,
                                  label: game.retriesRemaining > 0 ? 'このフェーズを再挑戦' : 'リトライ回数なし',
                                  disabled: game.retriesRemaining <= 0,
                                  action: g => g.startPhase(g.phase, 'retry') },
-                               { ...this.restartButton, label: '最初から', action: g => g.openDeckEditor(1, 'new', 'gameover') }];
+                               { ...this.restartButton, label: '最初から', action: g => g.openUnitSelection(1, 'new', 'gameover') }];
       default: return [];
     }
   },
@@ -3705,8 +3756,13 @@ const UI = {
     if (this.volumeDrag && this.volumeDrag.id === id) this.volumeDrag = null;
   },
   // true を返したら入力をここで消費する
-  deckLayout: { x: 64, top: 246, step: 37, minus: 344, plus: 429, btnW: 39, btnH: 30,
-                confirm: { x: 111, y: 716, w: 318, h: 56 }, cancel: { x: 185, y: 788, w: 170, h: 43 } },
+  // 540×960画面のユニット選択：3つの縦型カードとリロールボタン。
+  choiceCards: [
+    { x: 48, y: 242, w: 444, h: 135 },
+    { x: 48, y: 393, w: 444, h: 135 },
+    { x: 48, y: 544, w: 444, h: 135 },
+  ],
+  rerollButton: { x: 104, y: 730, w: 332, h: 60 },
   pointerDown(game, x, y, pointerId = 0) {
     // 設定ボタン以外を押した場合、10連打の隠しコマンドは最初から数え直す。
     const gearPressed = this.hit(this.gearButton, x, y);
@@ -3760,18 +3816,18 @@ const UI = {
       if (!unlocked) Sound.ui('confirm');
       return true;
     }
-    if (game.state === 'deckedit') {
-      const L = this.deckLayout;
-      for (let i = 0; i < Object.keys(UNIT_DEFS).length; i++) {
-        const type = Object.keys(UNIT_DEFS)[i], y0 = L.top + L.step * i;
-        if (y >= y0 && y <= y0 + L.btnH) {
-          if (x >= L.minus && x <= L.minus + L.btnW) { if (game.editDeck(type, -1)) Sound.ui('hold'); else Sound.ui('deny'); return true; }
-          if (x >= L.plus && x <= L.plus + L.btnW) { if (game.editDeck(type, 1)) Sound.ui('hold'); else Sound.ui('deny'); return true; }
-          if (x >= 63 && x < L.minus) { game.deckSelected = type; Sound.ui('hold'); return true; }
+    if (game.state === 'unitselect') {
+      for (let i = 0; i < game.choiceCandidates.length; i++) {
+        if (this.hit(this.choiceCards[i], x, y)) {
+          if (game.chooseUnit(game.choiceCandidates[i])) Sound.ui('confirm');
+          else Sound.ui('deny');
+          return true;
         }
       }
-      if (this.hit(L.confirm, x, y)) { if (game.confirmDeck()) Sound.ui('confirm'); else Sound.ui('deny'); return true; }
-      if (this.hit(L.cancel, x, y)) { game.cancelDeck(); Sound.ui('confirm'); return true; }
+      if (this.hit(this.rerollButton, x, y)) {
+        if (game.rerollUnitSelection()) Sound.ui('hold');
+        else Sound.ui('deny');
+      }
       return true;
     }
     if (this.hit(this.muteButton, x, y)) { Sound.setMuted(!Sound.muted); return true; }
@@ -4880,18 +4936,18 @@ const Renderer = {
       }
       return;
     }
-    if (g.state === 'deckedit') {
+    if (g.state === 'unitselect') {
       pg.image(ditherG, 0, 0);
-      Pix.frame(12, 38, LW - 24, 247, PALETTE.white, PALETTE.black, PALETTE.slate);
-      const L = UI.deckLayout;
-      for (let i = 0; i < Object.keys(UNIT_DEFS).length; i++) {
-        const y = L.top + L.step * i;
-        Pix.frame(q(L.minus), q(y), q(L.btnW), q(L.btnH), PALETTE.white, PALETTE.navy);
-        Pix.frame(q(L.plus), q(y), q(L.btnW), q(L.btnH), PALETTE.white, PALETTE.navy);
+      Pix.frame(9, 41, LW - 18, 259, PALETTE.white, PALETTE.black, PALETTE.slate);
+      for (let i = 0; i < g.choiceCandidates.length; i++) {
+        const box = UI.choiceCards[i], def = UNIT_DEFS[g.choiceCandidates[i]];
+        Pix.frame(q(box.x), q(box.y), q(box.w), q(box.h), PALETTE.white, PALETTE.navy, PALETTE.slate);
+        Pix.rect(q(box.x + 5), q(box.y + 8), 2, q(box.h - 16), def.color);
+        this.unitSprite(def, q(box.x + 57), q(box.y + box.h / 2), 12, {});
       }
-      Pix.frame(q(L.confirm.x), q(L.confirm.y), q(L.confirm.w), q(L.confirm.h),
-        DeckRules.validate(g.deckDraft, g.deckTargetPhase) ? PALETTE.green : PALETTE.slate, PALETTE.navy);
-      Pix.frame(q(L.cancel.x), q(L.cancel.y), q(L.cancel.w), q(L.cancel.h), PALETTE.silver, PALETTE.black);
+      const reroll = UI.rerollButton;
+      Pix.frame(q(reroll.x), q(reroll.y), q(reroll.w), q(reroll.h),
+        g.canRerollUnitSelection() ? PALETTE.yellow : PALETTE.slate, PALETTE.navy);
       return;
     }
     if (g.state === 'playing' ||
@@ -4968,6 +5024,7 @@ const Renderer = {
   texts(g) {
     if (g.state === 'settings') { this.settingsTexts(); return; }  // 設定画面は既存のHUD文字より前面
     if (g.state === 'title') { this.overlayTexts(g); return; } // メニューでは戦闘HUDを表示しない
+    if (g.state === 'unitselect') { this.overlayTexts(g); return; } // 3択画面では戦闘HUDを重ねない
     this.floatingTexts(g);  // UIテキストより先に描くことでHUDが必ず前面になる
     if ((g.state === 'playing' || g.isResultSettling()) && g.chainNotice && g.chainNotice.until > g.battleTime) {
       const remaining = g.chainNotice.until - g.battleTime;
@@ -5042,8 +5099,8 @@ const Renderer = {
 
   overlayTexts(g) {
     if (g.state === 'settings') { this.settingsTexts(); return; }
-    if (g.state === 'deckedit') {
-      this.deckEditorTexts(g);
+    if (g.state === 'unitselect') {
+      this.unitSelectionTexts(g);
       return;
     }
     if (g.state === 'playing' ||
@@ -5054,7 +5111,7 @@ const Renderer = {
       const lines = [
         '射出台のユニットを下へ引いて離すと飛ぶ',
         '引く距離で強さ、向きで方向が決まる',
-        'ユニット10種類から8枚のデッキを編集できます',
+        '開始時と2フェーズごとに3択でユニット獲得',
         'HOLDで1体保留・入れ替え（射出ごとに1回）',
         `全フェーズ累計${CONFIG.phase.breachLimit}体突破されると負け`,
       ];
@@ -5117,35 +5174,48 @@ const Renderer = {
              19, PALETTE.white, CENTER, CENTER);
   },
 
-  deckEditorTexts(g) {
-    const L = UI.deckLayout;
-    const total = g.deckDraftTotal(), types = g.deckDraftTypes(), cap = DeckRules.typeCap(g.deckTargetPhase);
-    this.txt('デッキ編集', 270, 147, 28, PALETTE.yellow, CENTER, CENTER);
-    this.txt(`フェーズ${g.deckTargetPhase}  ${total}/8枚  種類 ${types}/${cap}`, 270, 187, 17, PALETTE.white, CENTER, CENTER);
-    this.txt('全10種類から選択・同じユニットを複数枚使えます', 270, 215, 12, PALETTE.silver, CENTER, CENTER);
-    Object.keys(UNIT_DEFS).forEach((type, i) => {
-      const d = UNIT_DEFS[type], yy = L.top + L.step * i;
-      this.txt(d.name, 74, yy + 6, 15, g.deckSelected === type ? PALETTE.yellow : (g.deckDraft[type] ? PALETTE.white : PALETTE.silver));
-      this.txt(`C${d.cost} H${d.hp} M${d.mass}`, 188, yy + 8, 11, PALETTE.silver);
-      this.txt('−', L.minus + L.btnW/2, yy + 15, 23, PALETTE.white, CENTER, CENTER);
-      this.txt(String(g.deckDraft[type]), 405, yy + 15, 19, g.deckDraft[type] ? PALETTE.green : PALETTE.silver, CENTER, CENTER);
-      this.txt('＋', L.plus + L.btnW/2, yy + 15, 23, PALETTE.white, CENTER, CENTER);
-    });
-    const chosen = UNIT_DEFS[g.deckSelected] || UNIT_DEFS.normal;
-    const descriptions = {
-      normal: '射程3・0.6秒ごとに1ダメージ', bumper: 'コスト1・壁で壊れず、対ユニット反射で消滅',
-      steel: '質量2の打撃、敵を弾く', iron: '超重量・強力な衝突と吹き飛ばし',
-      shield: 'HP4・バリアHP8、破壊後10秒で再展開', heal: '接触相手を敵味方問わず1.5回復、消滅',
-      healer: '範囲4・2.9秒ごとに味方を2回復', rare: 'HP6・射撃ダメージ0.7',
-      bomb: '投擲して範囲3.5に敵味方4ダメージ', ice: '範囲5の敵の摩擦・速度半減、衝突で3秒凍結',
+  unitSelectionTexts(g) {
+    const first = g.choiceMode === 'new';
+    const nextCount = g.acquiredTypes.length + 1;
+    this.txt('ユニット選択', 270, 163, 29, PALETTE.yellow, CENTER, CENTER);
+    this.txt(first ? '最初のユニットを選んでください' : `フェーズ${g.phase}クリア・ユニットを追加`,
+      270, 203, 15, PALETTE.white, CENTER, CENTER);
+    this.txt(`獲得 ${nextCount} / ${CONFIG.deck.maxTypes} 枠（同種も選択可）`, 270, 225, 13, PALETTE.green, CENTER, CENTER);
+    const roles = {
+      normal: '射程3・0.6秒ごとに射撃', bumper: '壁で生存・強力な反射',
+      steel: '重量2・衝突攻撃', iron: '超重量・強力な衝突',
+      shield: 'バリアで弾を防ぐ', heal: '接触してHPを1.5回復',
+      healer: '2.9秒ごとにHPを2回復', rare: '軽量・射撃ダメージ0.7',
+      bomb: '範囲3.5・敵味方に爆発', ice: '移動低下・凍結3秒',
     };
-    this.txt(`選択: ${chosen.name}`, 270, 639, 15, PALETTE.yellow, CENTER, CENTER);
-    this.txt(descriptions[g.deckSelected] || '', 270, 663, 13, PALETTE.white, CENTER, CENTER);
-    const slots = DeckRules.expand(g.deckDraft).map(id => UNIT_DEFS[id].name.slice(0,2));
-    this.txt('編成 ' + (slots.join(' / ') || '未設定'), 270, 687, 11, PALETTE.silver, CENTER, CENTER);
-    this.txt(DeckRules.validate(g.deckDraft, g.deckTargetPhase) ? 'このデッキで開始' : '8枚に揃えてください',
-      270, L.confirm.y + 27, 19, DeckRules.validate(g.deckDraft, g.deckTargetPhase) ? PALETTE.green : PALETTE.silver, CENTER, CENTER);
-    this.txt('戻る（変更を破棄）', 270, L.cancel.y + 20, 13, PALETTE.silver, CENTER, CENTER);
+    g.choiceCandidates.forEach((type, i) => {
+      const def = UNIT_DEFS[type], box = UI.choiceCards[i], left = box.x + 125;
+      const held = g.acquiredTypes.filter(id => id === type).length;
+      this.txt(def.name, left, box.y + 23, 22, def.color);
+      if (held) this.txt(`所持 ${held} 枠`, box.x + box.w - 52, box.y + 23,
+        12, PALETTE.green, RIGHT);
+      this.txt(`COST ${def.cost}    HP ${def.hp || '—'}    重さ ${def.mass}`,
+        left, box.y + 61, 13, PALETTE.white);
+      this.txt(roles[type] || '特殊能力', left, box.y + 93, 13, PALETTE.silver);
+      this.txt('›', box.x + box.w - 23, box.y + 68, 29, PALETTE.yellow, CENTER, CENTER);
+    });
+    const can = g.canRerollUnitSelection();
+    this.txt(can ? `リロール  残り ${g.choiceRerolls}/${CONFIG.deck.rerollsPerChoice}`
+                 : g.choiceRerolls === 0 ? 'リロール使用済み' : 'すべての候補を表示中',
+      270, UI.rerollButton.y + 30, 17, can ? PALETTE.white : PALETTE.silver, CENTER, CENTER);
+    if (g.acquiredTypes.length) {
+      this.txt('獲得済み（重複分はデッキに追加）', 270, 831, 12, PALETTE.silver, CENTER, CENTER);
+      const typeCounts = new Map();
+      for (const type of g.acquiredTypes)
+        typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
+      const names = [...typeCounts].map(([type, count]) =>
+        UNIT_DEFS[type].name + (count > 1 ? ` ×${count}` : ''));
+      for (let i = 0; i < names.length; i += 4)
+        this.txt(names.slice(i, i + 4).join(' / '), 270, 858 + (i / 4) * 27,
+          13, PALETTE.green, CENTER, CENTER);
+    } else {
+      this.txt('選んだユニットだけでフェーズ1を開始', 270, 856, 13, PALETTE.silver, CENTER, CENTER);
+    }
   },
   scanlines() {
     noStroke(); fill(0, 0, 0, 34);
@@ -5227,7 +5297,7 @@ const Input = {
           if (game.settingsRestartConfirm) game.settingsRestartConfirm = false;
           else game.closeSettings();
         }
-        else game.cancelDeck();
+        // ユニット選択中は戻って候補を引き直すことはできない。
       }
     });
     document.addEventListener('visibilitychange', () => {
