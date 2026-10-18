@@ -27,6 +27,10 @@
     background: var(--letterbox);
     overscroll-behavior: none;
   }
+  /* メニューを含むページ上の文字はゲームと同じドットフォントに統一する。 */
+  html, body, button, input, textarea, select {
+    font-family: 'DotGothic16', 'MS Gothic', monospace;
+  }
   body {
     height: 100%;
     touch-action: none;
@@ -60,12 +64,15 @@ const CONFIG = {
     // ※レイアウト値はドット(3px)単位に揃えると描画がずれない
   },
 
+  gameplay: { speed: 1.2 },        // 戦闘だけゲーム内時間を1.2倍で進める（物理の固定刻みは維持）
+
   physics: {
     timestep: 1 / 120,           // 固定タイムステップ（秒）
     maxStepsPerFrame: 15,        // 1フレームで回す最大ステップ数（処理落ち時の暴走防止）
     maxSubsteps: 8,              // 高速移動時の追加分割数の上限
     solverIterations: 4,         // 衝突解決の反復回数（密集時の安定性）
     wallRestitution: 0.85,       // 壁側の反発係数（ユニットの反発係数と掛け合わせる）
+    defenseLineReboundMult: 1.5, // 防衛ラインの特殊反射（バンパーに当たったときと同倍率）
     stopSpeed: 8,                // この速度(px/s)未満で停止扱い
     maxSpeed: 1800,              // 速度上限（不自然な加速の防止）
     positionSlop: 0.3,           // 許容する重なり(px)
@@ -105,7 +112,7 @@ const CONFIG = {
     // BGM: 4小節のオリジナル・チップチューンをWeb Audio APIで合成（外部音声ファイル不要）
     musicVolume: 0.16,           // 効果音を聞き取りやすくするため控えめな音量
     musicBpm: 116,
-    impactVolume: 0.08,
+    impactVolume: 0.12,           // 強い衝突は低音とノイズを重ねて迫力を出す（リミッターで保護）
     hitVolume: 0.055,
     explosionVolume: 0.12,
     breachVolume: 0.11,
@@ -123,13 +130,14 @@ const CONFIG = {
       destroy:     { max: 3, gap: 0.03 },
       fanfare:     { max: 1, gap: 0.5 },
       heal:        { max: 3, gap: 0.05 },
-      impact:      { max: 3, gap: 0.065 },
+      impact:      { max: 5, gap: 0.025 },  // 連鎖衝突も聞こえるよう間引きを緩める
       hit:         { max: 4, gap: 0.045 },
       explosion:   { max: 2, gap: 0.12 },
       breach:      { max: 2, gap: 0.12 },
       gameover:    { max: 1, gap: 0.5 },
       ui:          { max: 2, gap: 0.07 },
       slider:      { max: 8, gap: 0 },       // 5段階スライダーは目盛りごとに短い確認音
+      secret:      { max: 1, gap: 0 },       // 隠しコスト無制限モード解放音
     },
   },
 
@@ -140,7 +148,7 @@ const CONFIG = {
   },
 
   phase: {
-    breachLimit: 5,              // 敗北までの突破上限
+    breachLimit: 10,             // 全フェーズ累計での突破上限（次フェーズへ引き継ぐ）
     initialCost: 10,             // 新しいゲームの開始時だけ付与。以後のフェーズは前のフェーズの残りを引き継ぐ
     firstSpawnDelay: 1.5,        // フェーズ開始から最初の召喚まで
   },
@@ -276,7 +284,24 @@ const CONFIG = {
     chainGap: 1.7,               // 連鎖の間隔が開きすぎたら終了
     chainMaxSeconds: 6,          // 1発起点の連鎖が無限に継続しないよう制限
     chainDisplay: 1.35,          // 連鎖数を表示する秒数
+    // 2連鎖目から衝突ダメージを大きく上げ、反射先の速度は少しずつ強化。
+    // 再衝突や味方同士の衝突も別の接触イベントであれば連鎖として加算する。
+    chainDamageSecond: 1.85,     // 2連鎖時の衝突ダメージ倍率
+    chainDamageStep: 0.45,       // 3連鎖以降、1連鎖ごとの追加倍率
+    chainDamageMax: 3.65,        // 無限に大きくならない上限
+    chainSpeedStep: 0.012,       // 2連鎖以降、連鎖数に応じた反射速度の微増
+    chainSpeedMax: 1.08,         // 1度の衝突による追加加速の上限
   },
+  hitstop: {
+    minSpeed: 620,            // これ以上の相対接近速度(px/s)で停止
+    minDuration: 0.065,       // 発動時の基本停止時間（実時間の秒、従来より長め）
+    maxDuration: 0.27,        // 高速・高威力時の停止上限（従来0.18秒）
+    secondsPerSpeed: 0.00007, // しきい値超過の速度1px/s当たりの停止時間
+    secondsPerDamage: 0.012,  // 衝突ダメージ1当たりの追加停止時間
+    lethalMinSpeed: 150,      // 衝突ダメージで破壊した場合は高速しきい値未満でも停止
+    lethalBonus: 0.05,       // 破壊時の追加停止時間
+  },
+  result: { overlayDelay: 0.7 }, // クリア・敗北確定後、結果UIを出すまでの実時間
   visuals: {
     // 射出台からの発射、および衝突で弾かれたユニットの後ろに、薄い灰色の小さな波紋を少しだけ残す
     trail: { duration: 0.32, lifetime: 0.30, spacing: 12, minSpeed: 65,
@@ -330,7 +355,7 @@ const UNIT_DEFS = {
   bumper: {
     name: 'バンパー', sprite: 'bumper', shape: 'chamfer', // 四隅を斜めに落とした八角形。描画と当たり判定を一致させる
     color: [255, 119, 168], colorDark: [126, 37, 83],
-    radius: 20, hp: 1, cost: 2,                    // HP1：最初の反射で固定と同時に壊れる使い捨て
+    radius: 20, hp: 1, cost: 1,                    // ユニットとの高速反射で消滅。壁反射だけでは壊れない
     mass: 1,
     launchFriction: 2534,
     collisionFriction: 330,
@@ -348,10 +373,10 @@ const UNIT_DEFS = {
   steel: {
     name: 'スチール', sprite: 'steel', slideSound: 'metal',   // 滑走音は金属
     color: [194, 195, 199], colorDark: [95, 87, 79],
-    radius: 20, hp: 5, cost: 4,
+    radius: 20, hp: 5, cost: 3,
     mass: 2,
-    launchFriction: 3106,        // 最大射出で約280px（ノーマル342pxより短い。実測で決定）
-    collisionFriction: 1725,     // 重量感を保ちつつ、衝突後の滑走を少し延ばす
+    launchFriction: 2500,        // 以前の3106より約20%低減。スチールの射出滑走を長くする
+    collisionFriction: 1300,     // 以前の1725より約25%低減。衝突後も滑りやすくする
     pushFriction: 450,           // 質量2なので踏ん張る力はノーマルの2倍
     restitution: 0.6,
     impactRestitution: 0.95,
@@ -371,11 +396,11 @@ const UNIT_DEFS = {
   },
   shield: {
     name: 'シールド', sprite: 'shield', color: [64, 180, 236], colorDark: [20, 89, 145],
-    radius: 24, hp: 1, cost: 5, mass: 4,
+    radius: 24, hp: 4, cost: 5, mass: 4,
     launchFriction: 3000, collisionFriction: 630, pushFriction: 500,
     restitution: 0.65, impactRestitution: 0.85, impactDamageMult: 0.5,
     knockbackMult: 1, allyDamageRatio: 0, anchorsOnImpact: false, shooter: null,
-    shield: { range: 250, hp: 8 },
+    shield: { range: 250, hp: 8, rechargeSeconds: 10, bodyDamageRatio: 0.2 },
   },
   heal: {
     name: 'ヒール', sprite: 'healAlly', color: [117, 242, 137], colorDark: [23, 127, 78],
@@ -383,7 +408,7 @@ const UNIT_DEFS = {
     launchFriction: 1800, collisionFriction: 540, pushFriction: 250,
     restitution: 0.8, impactRestitution: 0.9, impactDamageMult: 0,
     knockbackMult: 0.5, allyDamageRatio: 0, anchorsOnImpact: false, shooter: null,
-    contactHeal: 1,
+    contactHeal: 1.5,
   },
   healer: {
     name: 'ヒーラー', sprite: 'healerAlly', color: [56, 215, 169], colorDark: [13, 102, 104],
@@ -391,7 +416,7 @@ const UNIT_DEFS = {
     launchFriction: 2534, collisionFriction: 293, pushFriction: 450,
     restitution: 0.75, impactRestitution: 0.95, impactDamageMult: 0.5,
     knockbackMult: 1, allyDamageRatio: 0, anchorsOnImpact: false, shooter: null,
-    healer: { range: 200, interval: 3, amount: 1, shotSpeed: 300, shotLife: 2.5, radius: 4 },
+    healer: { range: 200, interval: 2.9, amount: 2, shotSpeed: 300, shotLife: 2.5, radius: 4 },
   },
   rare: {
     name: 'デテリオ', sprite: 'rare', color: [201, 143, 255], colorDark: [100, 52, 165],
@@ -408,11 +433,11 @@ const UNIT_DEFS = {
   },
   ice: {
     name: 'アイス', sprite: 'ice', color: [151, 230, 255], colorDark: [46, 121, 198],
-    radius: 20, hp: 2, cost: 5, mass: 1.4,
+    radius: 20, hp: 2, cost: 4, mass: 1.4,
     launchFriction: 420, collisionFriction: 101, pushFriction: 160,
     restitution: 0.94, impactRestitution: 0.9, impactDamageMult: 0.6,
     knockbackMult: 1, allyDamageRatio: 0, anchorsOnImpact: false, shooter: null,
-    ice: { range: 250, frictionFactor: 0.5, burstRange: 50, freezeSeconds: 3 },
+    ice: { range: 250, frictionFactor: 0.5, speedFactor: 0.5, burstRange: 50, freezeSeconds: 3 },
   },
 
 };
@@ -481,7 +506,8 @@ const PALETTE = {
 };
 const COLORS = { good: PALETTE.green };
 
-const FONT = "'DotGothic16', 'MS Gothic', 'Osaka-Mono', monospace";
+// UIテキスト・HUD・数値・設定・タイトルに共通で使うドットフォント。
+const FONT = "'DotGothic16', 'MS Gothic', monospace";
 
 /* =====================================================================
  * 2. Util
@@ -820,28 +846,45 @@ class Deck {
 class CostManager {
   constructor(cfg) {
     this.cfg = cfg;
+    this.unlimited = false;
     this.reset(0);
   }
+  // 隠しモードはこのページを閉じるまで有効。フェーズ開始・再挑戦・最初からでも解除しない。
+  enableUnlimited() {
+    this.unlimited = true;
+    this.value = this.cfg.max;
+    this.regenTimer = 0;
+  }
   reset(initial) {
-    this.value = initial;
+    this.value = this.unlimited ? this.cfg.max : initial;
     this.regenTimer = 0;
   }
   update(dt) {
+    if (this.unlimited) { this.value = this.cfg.max; this.regenTimer = 0; return; }
+    // MAXでは回復タイマーも完全停止。余剰時間を持ち越さず、消費後は0から再開する。
+    if (this.value >= this.cfg.max) { this.regenTimer = 0; return; }
     this.regenTimer += dt;
-    // 1/120秒を足し合わせると浮動小数の誤差でちょうど2秒に届かないことがあるため、わずかな誤差は許容する
+    // 1/120秒を足し合わせる際の浮動小数点誤差を許容する
     while (this.regenTimer >= this.cfg.regenInterval - 1e-9) {
       this.regenTimer -= this.cfg.regenInterval;
       this.add(this.cfg.regenAmount);
+      if (this.value >= this.cfg.max) { this.regenTimer = 0; break; }
     }
   }
-  add(n) { this.value = Math.min(this.cfg.max, this.value + n); }
-  canAfford(n) { return this.value >= n; }
+  add(n) {
+    if (this.unlimited) { this.value = this.cfg.max; this.regenTimer = 0; return; }
+    this.value = Math.min(this.cfg.max, this.value + n);
+    if (this.value >= this.cfg.max) this.regenTimer = 0;
+  }
+  canAfford(n) { return this.unlimited || this.value >= n; }
   spend(n) {
+    if (this.unlimited) { this.value = this.cfg.max; this.regenTimer = 0; return true; }
     if (!this.canAfford(n)) return false;
+    if (this.value >= this.cfg.max) this.regenTimer = 0;
     this.value -= n;
     return true;
   }
-  get regenProgress() { return this.regenTimer / this.cfg.regenInterval; }
+  get regenProgress() { return this.unlimited || this.value >= this.cfg.max ? 0 : this.regenTimer / this.cfg.regenInterval; }
 }
 
 /* =====================================================================
@@ -870,6 +913,8 @@ class Ally {
     this.reflections = 0;                      // 反射回数（バンパーのHP管理用）
     this.maxHp = d.hp; this.hp = d.hp;
     this.shieldHp = d.shield ? d.shield.hp : 0;
+    this.shieldRecharging = false;    // 耐久値0で展開解除。満タンになるまで弾を通す
+    this.iceSpeedFactor = 1;         // 範囲出入り時の倍率変更に一度だけ速度を合わせる
     this.freezeTimer = 0;
     this.healTimer = 0;
     this.shooter = d.shooter || null;
@@ -920,6 +965,8 @@ class Enemy {
     this.muzzleFlash = 0;
     this.throwTimer = 0;                       // 投擲型：次の投擲まで（対象がいる間のみ加算）
     this.vx = 0; this.vy = this.speed;         // 速度（歩行もノックバックもこの1つの速度で表す）
+    // 最初の召喚は画面上から入ってくる。一度全身が戦闘エリアへ入ったら再び上端から出ない。
+    this.enteredBattle = (y - this.r >= BATTLE.top);
     this.reward = d.reward;
     this.cooldown = 0;
     this.alive = true;
@@ -1049,7 +1096,7 @@ class EnemyProjectile {
     // シールドは敵本体を遮らないが、敵弾・砲弾を先に迎撃する。
     let barrier = null, barrierT = Infinity;
     for (const a of game.allies) {
-      if (!a.alive || a.shieldHp <= 0) continue;
+      if (!a.alive || !a.def.shield || a.shieldRecharging || a.shieldHp <= 0) continue;
       const R = a.def.shield.range;
       const proxy = { x: a.x, y: a.y, r: R, shape: 'circle' };
       const t = EnemyProjectile.hitFraction(this.x, this.y, nx, ny, proxy, this.r);
@@ -1066,8 +1113,8 @@ class EnemyProjectile {
       this.y += (ny - this.y) * barrierT;
       this.alive = false;
       const force = this.mode === 'shell' ? 5 : this.damage;
-      barrier.shieldHp = Math.max(0, barrier.shieldHp - force);
-      const inv = barrier.invMass;
+      game.hitShieldBarrier(barrier, force);
+      const inv = barrier.alive ? barrier.invMass : 0;
       if (inv > 0) { barrier.vx += this.dx * 220 * force * inv; barrier.vy += this.dy * 220 * force * inv;
         Physics.markKnocked(barrier); Physics.markTrail(barrier); }
       game.addEffect({ kind: 'ring', x: this.x, y: this.y, r: 15, color: PALETTE.blue, life: 0.3 });
@@ -1163,7 +1210,7 @@ class ScatterShard {
     let target = null, targetT = Infinity, shield = null;
     // シールドは敵の散弾も防ぐ。遮蔽物に当たった弾はそこで消える。
     for (const a of game.allies) {
-      if (!a.alive || a.shieldHp <= 0 || !a.def.shield) continue;
+      if (!a.alive || !a.def.shield || a.shieldRecharging || a.shieldHp <= 0) continue;
       const t = EnemyProjectile.hitFraction(this.x, this.y, nx, ny,
         { x: a.x, y: a.y, r: a.def.shield.range, shape: 'circle' }, this.r);
       if (t !== null && t < targetT) { target = a; shield = a; targetT = t; }
@@ -1178,7 +1225,7 @@ class ScatterShard {
       this.y += (ny - this.y) * targetT;
       this.alive = false;
       if (shield) {
-        shield.shieldHp = Math.max(0, shield.shieldHp - this.damage);
+        game.hitShieldBarrier(shield, this.damage);
       } else if (!target.isEnemy) game.damageAlly(target, this.damage);
       if (target.alive && target.invMass > 0) {
         target.vx += this.vx / Math.hypot(this.vx, this.vy) * this.impulse * target.invMass;
@@ -1376,8 +1423,8 @@ const Physics = {
     // 衝突面に対する相対接近速度を一定倍率で反転させる（側面方向の速度は維持）。
     // 衝突前に止まっているバンパーに当てれば、相手の跳ね返り速度が明確に増加する。
     // バンパーは従来どおり1回反射後に固定され、HP消費により消滅する。
-    const bumper = bounce && a.def?.reboundSpeedMult && a.invMass > 0 ? a
-      : bounce && b.def?.reboundSpeedMult && b.invMass > 0 ? b : null;
+    const bumper = bounce && a.def?.reboundSpeedMult ? a
+      : bounce && b.def?.reboundSpeedMult ? b : null; // 壁で固定されたバンパーも反射可能
     const rebounded = bumper === a ? b : a;
     if (bumper && rebounded.invMass > 0) {
       const sign = bumper === a ? 1 : -1;
@@ -1423,10 +1470,10 @@ const Physics = {
     }
   },
 
-  // バンパーの八角形。外接矩形は従来の40×40、角の切り欠きは辺長の約25%。
-  // 頂点は描画と衝突で共通の cutRatio を使う。
+  // バンパーの八角形。外接矩形は従来の40×40、角を大きく切り落として正八角形に近づける。
+  // 正八角形に近い輪郭にするため切り欠きを半径の58%とする。描画側も同率。
   chamferVertices(x, y, r) {
-    const k = r * 0.3;
+    const k = r * 0.58;
     return [[x-r+k,y-r],[x+r-k,y-r],[x+r,y-r+k],[x+r,y+r-k],
             [x+r-k,y+r],[x-r+k,y+r],[x-r,y+r-k],[x-r,y-r+k]];
   },
@@ -1579,29 +1626,86 @@ const Physics = {
     b.trailCarry = 0;
   },
 
+  // 通常の歩行ではなく、反射・吹き飛ばしで防衛ラインへ迫る敵だけを跳ね返す。
+  // 爆発・散弾の強いノックバックも、ricochetTime が付かない場合に速度で検出する。
+  shouldBounceEnemyAtDefenseLine(b) {
+    const knockedSpeed = Math.max(CONFIG.push.enemyBounceSpeed,
+      b.speed + CONFIG.push.knockbackDeviation);
+    return b.ricochetTime > 0 || b.vy >= knockedSpeed;
+  },
+
   resolveWalls(b, bounds, cfg, ctx) {
     if (b.anchored) return;
     if (b.isEnemy) {
-      // 敵：左右の壁のみ。上は出現位置より上へ出ない、下（防衛ライン）は通過して突破判定へ
+      // 敵：通常の歩行で越えれば突破。衝撃で弾かれて防衛ラインに当たったときだけ強く反射。
+      // 召喚時のみ上端の外から入場し、一度全身が入った敵は上端の内側で反射する。
       const e = Util.clamp(b.restitution, 0, 1); // 通常の壁反射も増速させない
       if (b.x - b.r < bounds.left)  { b.x = bounds.left + b.r;  if (b.vx < 0) { const hit = -b.vx; b.vx = -b.vx * e; if (hit >= CONFIG.combat.enemyRicochetImpulse) b.ricochetTime = CONFIG.combat.enemyRicochetSeconds; if (ctx && hit >= 110) this.markTrail(b); } }
       if (b.x + b.r > bounds.right) { b.x = bounds.right - b.r; if (b.vx > 0) { const hit = b.vx; b.vx = -b.vx * e; if (hit >= CONFIG.combat.enemyRicochetImpulse) b.ricochetTime = CONFIG.combat.enemyRicochetSeconds; if (ctx && hit >= 110) this.markTrail(b); } }
-      if (b.y < bounds.top - b.r)   { b.y = bounds.top - b.r;   if (b.vy < 0) b.vy = 0; }
+      if (!b.enteredBattle && b.y - b.r >= bounds.top) b.enteredBattle = true;
+      if (b.enteredBattle) {
+        if (b.y - b.r < bounds.top) {
+          b.y = bounds.top + b.r;
+          if (b.vy < 0) b.vy = -b.vy * e;
+        }
+      } else if (b.y < bounds.top - b.r) {
+        b.y = bounds.top - b.r;
+        if (b.vy < 0) b.vy = 0;
+      }
+      if (b.y + b.r >= bounds.bottom && b.vy > 0 && this.shouldBounceEnemyAtDefenseLine(b)) {
+        const hit = b.vy;
+        b.y = bounds.bottom - b.r;  // 画面内で反射させ、突破数は加算しない。
+        b.vy = -hit * cfg.defenseLineReboundMult;
+        b.ricochetTime = CONFIG.combat.enemyRicochetSeconds;
+        this.capSpeed(b, cfg);
+        if (ctx) {
+          this.markTrail(b);
+          ctx.world.events.push({ type: 'wallCollision', body: b, approach: hit,
+            x: b.x, y: bounds.bottom, nx: 0, ny: -1 });
+        }
+      }
       return;
     }
     const e = Util.clamp(b.restitution * cfg.wallRestitution, 0, 1);
-    let hit = 0;                                   // 壁へ向かっていた速度（反射の強さ）
-    if (b.x - b.r < bounds.left)   { b.x = bounds.left + b.r;   if (b.vx < 0) { hit = Math.max(hit, -b.vx); b.vx = -b.vx * e; } }
-    if (b.x + b.r > bounds.right)  { b.x = bounds.right - b.r;  if (b.vx > 0) { hit = Math.max(hit, b.vx);  b.vx = -b.vx * e; } }
-    if (b.y - b.r < bounds.top)    { b.y = bounds.top + b.r;    if (b.vy < 0) { hit = Math.max(hit, -b.vy); b.vy = -b.vy * e; } }
-    if (b.y + b.r > bounds.bottom) { b.y = bounds.bottom - b.r; if (b.vy > 0) { hit = Math.max(hit, b.vy);  b.vy = -b.vy * e; } }
+    let hit = 0, nx = 0, ny = 0, x = b.x, y = b.y;
+    // 複数の壁へ同時に当たったときは、最も速度の大きい衝突地点を演出へ渡す。
+    if (b.x - b.r < bounds.left) {
+      b.x = bounds.left + b.r;
+      if (b.vx < 0) {
+        const v = -b.vx; b.vx = v * e;
+        if (v > hit) { hit = v; nx = 1; ny = 0; x = bounds.left; y = b.y; }
+      }
+    }
+    if (b.x + b.r > bounds.right) {
+      b.x = bounds.right - b.r;
+      if (b.vx > 0) {
+        const v = b.vx; b.vx = -v * e;
+        if (v > hit) { hit = v; nx = -1; ny = 0; x = bounds.right; y = b.y; }
+      }
+    }
+    if (b.y - b.r < bounds.top) {
+      b.y = bounds.top + b.r;
+      if (b.vy < 0) {
+        const v = -b.vy; b.vy = v * e;
+        if (v > hit) { hit = v; nx = 0; ny = 1; x = b.x; y = bounds.top; }
+      }
+    }
+    if (b.y + b.r > bounds.bottom) {
+      b.y = bounds.bottom - b.r;
+      if (b.vy > 0) {
+        const v = b.vy;
+        // 防衛ラインだけはバンパーと同じ1.5倍で反射。予想軌道も共通処理なので一致。
+        b.vy = -v * cfg.defenseLineReboundMult;
+        this.capSpeed(b, cfg);
+        if (v > hit) { hit = v; nx = 0; ny = -1; x = b.x; y = bounds.bottom; }
+      }
+    }
     if (b.anchorsOnImpact && hit >= cfg.bounceThreshold) {
       this.anchor(b);                              // バンパー：壁で反射した直後に固定
-      if (ctx) ctx.world.events.push({ type: 'wallImpact', body: b, approach: hit });
+      if (ctx) ctx.world.events.push({ type: 'wallImpact', body: b, approach: hit, x, y, nx, ny });
     } else if (ctx && (hit >= 110 || (b.def?.ice && hit >= cfg.bounceThreshold))) {
       this.markTrail(b);
-      // 壁反射自体は従来どおり。音を鳴らすためだけにイベントを記録する。
-      ctx.world.events.push({ type: 'wallCollision', body: b, approach: hit });
+      ctx.world.events.push({ type: 'wallCollision', body: b, approach: hit, x, y, nx, ny });
     }
   },
 
@@ -1611,8 +1715,9 @@ const Physics = {
     if (v === 0) return;
     // 敵に押されている低速の味方は pushFriction で踏ん張る（射出・滑走中の摩擦は変えない）
     const pushed = b.enemyContact && v < CONFIG.push.slowSpeed && b.def && b.def.pushFriction;
-    const iceNear = b._iceSlow || false;
-    const nv = v - (pushed ? b.def.pushFriction : b.friction) * (iceNear ? 0.5 : 1) * h;
+    // 氷の摩擦低減は味方にも適用。移動速度の半減は敵にのみ適用する。
+    const iceFriction = b._iceFrictionFactor ?? 1;
+    const nv = v - (pushed ? b.def.pushFriction : b.friction) * iceFriction * h;
     if (pushed ? nv <= 0 : nv <= cfg.stopSpeed) {
       b.vx = 0; b.vy = 0;
       // バンパー：何にも当たらず止まったらその場に設置（固定）。以後は当たった側だけが強く跳ね返る
@@ -1712,19 +1817,27 @@ const Combat = {
   // 敵の歩行：目標（真下へ歩行速度）に向けて速度を変える。位置は Physics.step が動かす
   //  - 弾かれている間（歩行速度から大きくずれている）は knockbackFriction でずれを減らす（従来のノックバックと同じ減速）
   //  - 歩いている間は driveAccel ×（1 − 速度/歩行速度）で加速。押し返されて遅くなるほど強く押す
+  effectiveSpeed(e) { return e.speed * (e.iceSpeedFactor || 1); },
+
   driveEnemies(game, dt) {
     const K = CONFIG.push;
     for (const e of game.enemies) {
       if (!e.alive || e.freezeTimer > 0) continue;
+      // 上端にいる敵は、回復・遠距離攻撃・最後列維持よりも画面内への復帰を優先。
+      // 召喚直後や強い吹き飛ばしでも敵が画面外で停止し続けないようにする。
+      if (e.y - e.r < BATTLE.top) {
+        this.driveEnemyIntoBattle(e, dt);
+        continue;
+      }
       if (e.def.healer) { this.driveHealer(game, e, dt); continue; }
       if (e.def.thrower) { this.driveThrower(game, e, dt); continue; }
       if (e.def.ranged) { this.driveRanged(game, e, dt); continue; }
-      const dx = e.vx, dy = e.vy - e.speed, dev = Math.hypot(dx, dy);
-      if (this.isKnocked(e, 0, e.speed)) {
-        const nd = Math.max(0, dev - e.def.knockbackFriction * (e._iceSlow ? 0.5 : 1) * dt);
-        e.vx = (dx / dev) * nd; e.vy = e.speed + (dy / dev) * nd;
+      const dx = e.vx, dy = e.vy - this.effectiveSpeed(e), dev = Math.hypot(dx, dy);
+      if (this.isKnocked(e, 0, this.effectiveSpeed(e))) {
+        const nd = Math.max(0, dev - e.def.knockbackFriction * (e._iceFrictionFactor ?? 1) * dt);
+        e.vx = (dx / dev) * nd; e.vy = this.effectiveSpeed(e) + (dy / dev) * nd;
       } else {
-        if (e.speed > 0) e.vy += K.driveAccel * (1 - e.vy / e.speed) * dt;
+        if (this.effectiveSpeed(e) > 0) e.vy += K.driveAccel * (1 - e.vy / this.effectiveSpeed(e)) * dt;
         else e.vy = Math.sign(e.vy) * Math.max(0, Math.abs(e.vy) - K.driveAccel * dt);   // 歩かない敵（試験用など）は止まる
         const lat = Math.max(0, Math.abs(e.vx) - K.driveAccel * dt);
         e.vx = Math.sign(e.vx) * lat;
@@ -1732,16 +1845,27 @@ const Combat = {
     }
   },
 
+  // 画面外（上端）の敵の共通復帰処理。速度と摩擦の既存仕様を保持しながら内側へ誘導する。
+  driveEnemyIntoBattle(e, dt) {
+    const speed = Math.max(42, this.effectiveSpeed(e));
+    const accel = CONFIG.push.driveAccel;
+    // 上端の外では下方向へ復帰させる。水平のノックバックは徐々に減速。
+    e.vx = Math.sign(e.vx) * Math.max(0, Math.abs(e.vx) - accel * dt);
+    e.vy = Math.max(0, e.vy);
+    // 内向きの高速ノックバックは減速させず、遅い敵だけ歩行速度まで加速する。
+    if (e.vy < speed) e.vy = Math.min(speed, e.vy + accel * dt);
+  },
+
   // 射撃型・砲撃型：射程内の味方を捕捉したら停止するが、質量を無限大にはせず押し合いは維持する
   driveRanged(game, e, dt) {
     const target = this.findNearestInRange({ x: e.x, y: e.y, range: e.def.ranged.range }, game.allies);
-    const desiredY = target ? 0 : e.speed;
+    const desiredY = target ? 0 : this.effectiveSpeed(e);
     const dx = e.vx, dy = e.vy - desiredY, dev = Math.hypot(dx, dy);
     if (this.isKnocked(e, 0, desiredY)) {
-      const nd = Math.max(0, dev - e.def.knockbackFriction * (e._iceSlow ? 0.5 : 1) * dt);
+      const nd = Math.max(0, dev - e.def.knockbackFriction * (e._iceFrictionFactor ?? 1) * dt);
       if (dev > 0) { e.vx = dx / dev * nd; e.vy = desiredY + dy / dev * nd; }
     } else {
-      const k = Math.min(1, (CONFIG.push.driveAccel / e.speed) * dt);
+      const k = Math.min(1, (CONFIG.push.driveAccel / this.effectiveSpeed(e)) * dt);
       e.vx += (0 - e.vx) * k;
       e.vy += (desiredY - e.vy) * k;
     }
@@ -1757,15 +1881,15 @@ const Combat = {
       if (other !== e && other.alive) rearY = Math.min(rearY, other.y);
     }
     const desiredY = Number.isFinite(rearY)
-      ? (e.y < rearY - T.rearDistance - 5 ? e.speed
-         : e.y > rearY - T.rearDistance + 5 ? -e.speed : 0)
-      : e.speed;
+      ? (e.y < rearY - T.rearDistance - 5 ? this.effectiveSpeed(e)
+         : e.y > rearY - T.rearDistance + 5 ? -this.effectiveSpeed(e) : 0)
+      : this.effectiveSpeed(e);
     const dx = e.vx, dy = e.vy - desiredY, dev = Math.hypot(dx, dy);
     if (this.isKnocked(e, 0, desiredY)) {
-      const nd = Math.max(0, dev - e.def.knockbackFriction * (e._iceSlow ? 0.5 : 1) * dt);
+      const nd = Math.max(0, dev - e.def.knockbackFriction * (e._iceFrictionFactor ?? 1) * dt);
       if (dev > 1e-9) { e.vx = dx / dev * nd; e.vy = desiredY + dy / dev * nd; }
     } else {
-      const k = Math.min(1, (CONFIG.push.driveAccel / e.speed) * dt);
+      const k = Math.min(1, (CONFIG.push.driveAccel / this.effectiveSpeed(e)) * dt);
       e.vx += (0 - e.vx) * k;
       e.vy += (desiredY - e.vy) * k;
     }
@@ -1787,18 +1911,18 @@ const Combat = {
     const K = CONFIG.push, H = e.def.healer;
     const t = Healing.findTarget(game, e);
     e.healTarget = t;
-    let tx = 0, ty = e.speed;
+    let tx = 0, ty = this.effectiveSpeed(e);
     if (t) {
       const dx = t.x - e.x, dy = t.y - e.y, d = Math.hypot(dx, dy);
-      if (d > H.range * 0.9) { tx = (dx / d) * e.speed; ty = (dy / d) * e.speed; }   // 少し内側まで寄る
+      if (d > H.range * 0.9) { tx = (dx / d) * this.effectiveSpeed(e); ty = (dy / d) * this.effectiveSpeed(e); }   // 少し内側まで寄る
       else { tx = 0; ty = 0; }
     }
     const dx = e.vx - tx, dy = e.vy - ty, dev = Math.hypot(dx, dy);
     if (this.isKnocked(e, tx, ty)) {
-      const nd = Math.max(0, dev - e.def.knockbackFriction * (e._iceSlow ? 0.5 : 1) * dt);
+      const nd = Math.max(0, dev - e.def.knockbackFriction * (e._iceFrictionFactor ?? 1) * dt);
       e.vx = tx + (dx / dev) * nd; e.vy = ty + (dy / dev) * nd;
     } else {
-      const k = Math.min(1, (K.driveAccel / e.speed) * dt);
+      const k = Math.min(1, (K.driveAccel / this.effectiveSpeed(e)) * dt);
       e.vx += (tx - e.vx) * k; e.vy += (ty - e.vy) * k;
     }
   },
@@ -1943,7 +2067,6 @@ const Healing = {
         if (healed > 0) {
           Sound.healImpact();
           game.addEffect({ kind: 'heal', x: hit.x, y: hit.y, r: hit.r, life: 0.5 });
-          game.addEffect({ kind: 'text', x: hit.x, y: hit.y, text: '+' + (Math.round(healed * 100) / 100), color: PALETTE.green, life: 0.8 });
         }
         continue;
       }
@@ -2286,7 +2409,7 @@ const Sound = {
   sfx: new Set(),                // 鳴っている効果音（中断時にまとめて止める）
   destroyed: new WeakSet(),      // 撃破音を鳴らし済みのユニット
   stats: { shot: 0, enemyAttack: 0, destroy: 0, fanfare: 0, heal: 0,
-           impact: 0, hit: 0, explosion: 0, breach: 0, gameover: 0, ui: 0, slider: 0, skipped: 0 },
+           impact: 0, hit: 0, explosion: 0, breach: 0, gameover: 0, ui: 0, slider: 0, secret: 0, skipped: 0 },
   _noise: null,
 
   noiseBuffer() {
@@ -2373,7 +2496,7 @@ const Sound = {
   updateSlide(game) {
     const A = CONFIG.audio;
     const agg = { basic: { sum2: 0, max: 0, n: 0 }, metal: { sum2: 0, max: 0, n: 0 } };
-    if (!this.muted && this.ctx && game.state === 'playing') {
+    if (!this.muted && this.ctx && (game.state === 'playing' || game.isResultSettling()) && game.hitstopRemaining <= 0) {
       for (const a of game.allies) {
         if (!a.alive || a.anchored) continue;
         const v = Math.hypot(a.vx, a.vy);
@@ -2486,17 +2609,33 @@ const Sound = {
     this.play('destroy', voices, CONFIG.audio.destroyVolume);
   },
 
-  // 衝突：速さによって重み、素材（鋼）によって音色を変える。短時間の衝突連打は間引く。
-  impact(speed, metal = false) {
+  // ヒットストップ時の衝突音：速度・衝突威力・破壊に応じて低音、金属音、破砕ノイズを重ねる。
+  // 通常の押し合いは軽く、高威力の連鎖衝突では明確に派手になる。
+  impact(speed, metal = false, power = 0, stopDuration = 0, lethal = false) {
     if (!this.begin('impact')) return;
-    const strength = Util.clamp((speed - 90) / 1100, 0, 1);
-    const base = metal ? 480 : 240;
-    this.play('impact', [
-      { type: metal ? 'triangle' : 'square', f0: base + 380 * strength,
-        f1: 75 + 90 * strength, dur: 0.085 + 0.085 * strength, gain: 0.9 },
+    const speedStrength = Util.clamp((speed - 90) / 1150, 0, 1);
+    const powerStrength = Util.clamp(power / 7, 0, 1);
+    const strength = Util.clamp(0.54 * speedStrength + 0.46 * powerStrength + (lethal ? 0.22 : 0), 0, 1);
+    const stopping = stopDuration > 0;
+    const base = metal ? 540 : 320;
+    const voices = [
+      { type: metal ? 'triangle' : 'square', f0: base + 320 * strength,
+        f1: 72 + 90 * strength, dur: 0.09 + 0.10 * strength, gain: 1.0 },
       { noise: true, filter: metal ? 'bandpass' : 'lowpass',
-        fq0: metal ? 4400 : 2600, fq1: 350, dur: 0.055 + 0.09 * strength, gain: 0.4 },
-    ], CONFIG.audio.impactVolume * (0.4 + 0.6 * strength));
+        fq0: metal ? 5200 : 3300, fq1: 280, dur: 0.065 + 0.11 * strength, gain: 0.60 },
+    ];
+    if (stopping) {
+      voices.push({ type: 'sawtooth', f0: 155 + 90 * strength,
+        f1: 38, dur: 0.15 + 0.09 * strength, gain: 0.95 });
+      voices.push({ noise: true, filter: 'lowpass', fq0: 950 + 950 * strength,
+        fq1: 110, dur: 0.13 + 0.09 * strength, gain: 0.85 });
+      if (strength >= 0.62 || lethal) voices.push({
+        type: 'square', f0: 680 + 550 * strength, f1: 125,
+        dur: 0.11 + 0.08 * strength, gain: 0.45,
+      });
+    }
+    this.play('impact', voices, CONFIG.audio.impactVolume
+      * (0.40 + 0.75 * strength + (stopping ? 0.34 : 0) + (lethal ? 0.12 : 0)));
   },
 
   hit(side = 'enemy') {
@@ -2546,6 +2685,19 @@ const Sound = {
       confirm: [ { type: 'triangle', f0: 520, f1: 785, dur: 0.12, gain: 0.8 } ],
     };
     this.play('ui', sounds[kind] || sounds.hold, CONFIG.audio.uiVolume);
+  },
+
+  // 設定ボタン10連打による隠しモード解放：上昇する3音と明るいフィニッシュ。
+  // 通常のUI音とは別系統にし、直前のタップ音で間引かれないようにする。
+  unlimitedUnlock() {
+    if (!this.begin('secret')) return;
+    this.play('secret', [
+      { type: 'square', f0: 523, f1: 523, dur: 0.13, delay: 0.00, gain: 0.65 },
+      { type: 'square', f0: 659, f1: 659, dur: 0.13, delay: 0.13, gain: 0.65 },
+      { type: 'square', f0: 784, f1: 784, dur: 0.15, delay: 0.26, gain: 0.70 },
+      { type: 'triangle', f0: 1047, f1: 1319, dur: 0.38, delay: 0.40, gain: 1.0 },
+      { type: 'sine', f0: 523, f1: 659, dur: 0.32, delay: 0.40, gain: 0.55 },
+    ], CONFIG.audio.uiVolume * 1.8);
   },
 
   // 音量スライダーが25%の目盛りを越えたときの聞き取りやすい短い確認音。
@@ -2659,8 +2811,10 @@ const Sound = {
 
   updateBgm(state) {
     const m = this.music;
-    if (state !== 'playing' || this.muted ||
-        (typeof document !== 'undefined' && document.hidden)) {
+    // メニュー・デッキ編集・戦闘・結果・設定のすべてでBGMを流し続ける。
+    // ブラウザが起動直後の自動再生を禁止した場合、最初の操作で音声を再開する。
+    if (!['title', 'deckedit', 'playing', 'settings', 'cleared', 'gameover'].includes(state)
+        || this.muted || (typeof document !== 'undefined' && document.hidden)) {
       if (m.playing) this.stopBgm();
       return;
     }
@@ -2830,12 +2984,14 @@ class Game {
     this.healShots = [];
     this.spawner.reset(1, makeRng(1));
     this.breaches = 0;
+    this.phaseStartBreaches = 0; // 再挑戦時に復元する、そのフェーズ開始時の突破数
     this.kills = 0;
     this.battleTime = 0;
     this.chainSerial = 0;
     this.chains = new Map();
     this.chainNotice = null;
     this.accumulator = 0;
+    this.hitstopRemaining = 0;
     this.stateTime = 0;
     this.settingsReturn = null;
     this.settingsReturnTime = 0;
@@ -2923,7 +3079,11 @@ class Game {
     this.bombs = [];
     this.effects = [];
     this.trails = [];
-    this.breaches = 0;
+    // 突破数はゲーム全体で累積。クリア後は維持し、再挑戦では開始時点まで戻す。
+    const breaches = mode === 'next' ? this.breaches
+      : mode === 'retry' ? (this.phaseStartBreaches ?? 0) : 0;
+    this.breaches = breaches;
+    this.phaseStartBreaches = breaches;
     this.kills = 0;
     this.battleTime = 0;
     this.chains.clear();
@@ -2943,6 +3103,7 @@ class Game {
     this.spawner.reset(n, makeRng(seed + n * 7919));
     this.launcher.cancel();
     this.accumulator = 0;
+    this.hitstopRemaining = 0;
     Sound.stopSfx();                                     // 前のフェーズの戦闘音を止める（ファンファーレは途切れさせない）
     this.setState('playing');
   }
@@ -2950,33 +3111,60 @@ class Game {
   setState(s) {
     this.state = s;
     this.stateTime = 0;
-    if (s !== 'playing') this.launcher.cancel();
-    // 設定画面へ一時退避した場合はBGMを止めず、戦闘に戻っても再開位置を維持する。
-    if (s !== 'playing' && !(s === 'settings' && this.settingsReturn === 'playing')) Sound.stopBgm();
+    if (s !== 'playing') {
+      this.launcher.cancel();
+      // 結果表示までの0.7秒は戦場の反射・衝撃を続けるため、ヒットストップも引き継ぐ。
+      if (s !== 'cleared' && s !== 'gameover') this.hitstopRemaining = 0;
+    }
+    // メニュー・編成・結果画面への遷移ではBGMを止めない。音声の停止はミュート／タブ非表示時のみ。
+  }
+
+  // 結果UI待機中も、入力と召喚は停止しながら戦場の物理・残像・攻撃・エフェクトは更新する。
+  isResultSettling() {
+    return (this.state === 'cleared' || this.state === 'gameover')
+      && this.stateTime < CONFIG.result.overlayDelay;
   }
 
   // 実時間の経過を受け取り、固定タイムステップで進める
   update(frameDt) {
     const dt = Math.min(Math.max(frameDt, 0), 0.25);
+    const previousStateTime = this.stateTime;
     this.stateTime += dt;
+    this.advanceRealtimeEffects(dt); // ヒットストップ中も衝撃波が動く。物理演算とは独立。
     this.launcher.update(dt);
     this.holdDeny = Math.max(0, this.holdDeny - dt);
-    if (this.state !== 'playing') { this.accumulator = 0; return; }
+    const resultState = this.state === 'cleared' || this.state === 'gameover';
+    if (this.state !== 'playing' && !resultState) { this.accumulator = 0; return; }
+    // 表示境界をまたぐフレームでも0.7秒ちょうどまで物理を進める。
+    let activeDt = resultState
+      ? Math.min(dt, Math.max(0, CONFIG.result.overlayDelay - previousStateTime)) : dt;
+    if (activeDt <= 0) { this.accumulator = 0; this.hitstopRemaining = 0; return; }
+
+    // 高速衝突ごとのヒットストップ。クールダウンなしで連鎖発動を許す。
+    // 残り時間を消費したフレームでは余剰時間だけ物理演算を進める。
+    if (this.hitstopRemaining > 0) {
+      const frozen = Math.min(activeDt, this.hitstopRemaining);
+      this.hitstopRemaining = Math.max(0, this.hitstopRemaining - frozen);
+      activeDt -= frozen;
+      if (activeDt < 1e-9) { this.accumulator = 0; return; }
+    }
 
     const h = CONFIG.physics.timestep;
-    this.accumulator += dt;
+    this.accumulator += activeDt * CONFIG.gameplay.speed;
     let steps = 0;
     while (this.accumulator >= h - 1e-9) {           // 浮動小数の誤差でステップを取りこぼさない
-      this.fixedUpdate(h);
+      this.fixedUpdate(h, resultState);
       this.accumulator -= h;
-      if (++steps >= CONFIG.physics.maxStepsPerFrame || this.state !== 'playing') {
+      // このステップの衝突で停止が発動したら、それ以上のステップを同じ描画フレームで進めない。
+      if (++steps >= CONFIG.physics.maxStepsPerFrame || (this.state !== 'playing' && !resultState) || this.hitstopRemaining > 0) {
         this.accumulator = 0;
         break;
       }
     }
   }
 
-  fixedUpdate(dt) {
+  fixedUpdate(dt, settling = this.isResultSettling()) {
+    // 終了時刻をまたぐ最後のフレームでも、残りの時間分の物理処理を進める。
     this.battleTime += dt;
     // 発射後に途切れた連鎖を定期的に破棄し、メモリを使い続けない。
     for (const [id, c] of this.chains) {
@@ -2984,8 +3172,17 @@ class Game {
         this.chains.delete(id);
     }
     if (this.chainNotice && this.battleTime >= this.chainNotice.until) this.chainNotice = null;
-    this.cost.update(dt);
-    this.spawner.update(dt, this);
+    // フェーズ結果が確定した後は敵を新規召喚せず、報酬・コスト回復も進めない。
+    if (!settling) {
+      this.cost.update(dt);
+      this.spawner.update(dt, this);
+    }
+    // 同一の固定ステップで実際に変化したHPを記録する。
+    // 味方・敵、射撃・衝突・回復、撃破直前のHP変化をすべて同じ規則で表示。
+    const hpBefore = new Map();
+    for (const unit of [...this.allies, ...this.enemies]) {
+      if (unit.alive) hpBefore.set(unit, unit.hp);
+    }
     this.updateSpecialPhysics(dt);
     Combat.driveEnemies(this, dt);
     Physics.step(this.bodies(), dt, BATTLE, this.phys);   // 味方と敵をまとめて衝突・押し合い
@@ -3000,9 +3197,22 @@ class Game {
     for (const b of this.enemyBombs) b.update(dt, this);
     for (const b of this.scatterShards) b.update(dt, this);
     Healing.update(this, dt);
+    this.recordHpChanges(hpBefore);
     this.cleanup();
     this.updateEffects(dt);
-    this.checkPhaseEnd();
+    if (!settling) this.checkPhaseEnd();
+  }
+
+  // HPの増減を共通で検知。ユニット削除より前に調べるため、致死ダメージも表示される。
+  recordHpChanges(before) {
+    for (const [unit, oldHp] of before) {
+      const diff = unit.hp - oldHp;
+      if (Math.abs(diff) < 1e-6) continue;
+      const magnitude = Math.round(Math.abs(diff) * 100) / 100;
+      const label = (diff > 0 ? '+' : '-') + String(magnitude);
+      this.addEffect({ kind: 'text', x: unit.x, y: unit.y,
+        text: label, magnitude, color: diff > 0 ? PALETTE.green : PALETTE.red, life: 0.8 });
+    }
   }
 
   cleanup() {
@@ -3021,24 +3231,15 @@ class Game {
     if (this.state !== 'playing') return;              // 判定（とクリア音・停止処理）はプレイ中に1回だけ
     // 敗北判定をクリア判定より優先
     if (this.breaches >= this.params.breachLimit) {
+      // 弾丸・敵・衝突エフェクトを消さず、結果UIが出るまで戦場を動かす。
       this.setState('gameover');
-      this.healShots = [];
-      this.enemyShots = [];
-      this.enemyBombs = []; this.scatterShards = [];
-      this.allyHealShots = []; this.bombs = [];
-      Sound.stopSfx();                                   // 戦闘の効果音を残さない（クリア音は鳴らさない）
       Sound.defeat();
       return;
     }
     if (this.spawner.done && this.enemies.length === 0 &&
         this.enemyBombs.length === 0 && this.scatterShards.length === 0) {
-      this.bullets = [];
-      this.healShots = [];
-      this.enemyShots = [];
-      this.enemyBombs = []; this.scatterShards = [];
-      this.allyHealShots = []; this.bombs = [];
+      // クリア時も場に残った弾・波紋の余韻を0.7秒間見せる。
       this.setState('cleared');
-      Sound.stopSfx();
       Sound.fanfare();                                   // 1回のクリアにつき1回（状態が変わるのはここだけ）
     }
   }
@@ -3055,7 +3256,7 @@ class Game {
       const ally = new Ally(type, p.x, p.y, vx, vy);
       const chainId = ++this.chainSerial;
       ally.chainId = chainId;
-      this.chains.set(chainId, { count: 0, hitIds: new Set(),
+      this.chains.set(chainId, { count: 0,
         lastAt: this.battleTime, until: this.battleTime + CONFIG.reflection.chainMaxSeconds });
       Physics.markTrail(ally);
       this.allies.push(ally);
@@ -3090,6 +3291,36 @@ class Game {
     return out;
   }
 
+  // 衝突速度と打撃力に応じて停止。致命的な衝突ダメージなら通常の速度閾値未満でも発動。
+  // 新しい衝突は直前のヒットストップの残り時間を加算せず上書きする。
+  requestHitstop(speed, impactPower = 0, lethal = false) {
+    const cfg = CONFIG.hitstop;
+    const threshold = lethal ? cfg.lethalMinSpeed : cfg.minSpeed;
+    if ((this.state !== 'playing' && !this.isResultSettling()) || speed < threshold) return false;
+    const duration = cfg.minDuration
+      + Math.max(0, speed - cfg.minSpeed) * cfg.secondsPerSpeed
+      + Math.max(0, impactPower) * cfg.secondsPerDamage
+      + (lethal ? cfg.lethalBonus : 0);
+    this.hitstopRemaining = Util.clamp(duration, cfg.minDuration, cfg.maxDuration);
+    return true;
+  }
+
+  // 衝突停止を発生させた打撃だけ、停止時間と威力に連動する実時間の衝撃演出を出す。
+  collisionHitstopFx(x, y, nx, ny, speed, power, metal = false, lethal = false) {
+    const fired = this.requestHitstop(speed, power, lethal);
+    if (fired) {
+      const durationFactor = Util.clamp((this.hitstopRemaining - CONFIG.hitstop.minDuration)
+        / (CONFIG.hitstop.maxDuration - CONFIG.hitstop.minDuration), 0, 1);
+      const powerFactor = Util.clamp(power / 8, 0, 1);
+      const intensity = Util.clamp(0.18 + durationFactor * 0.40 + powerFactor * 0.32
+        + (lethal ? 0.18 : 0), 0, 1);
+      this.addEffect({ kind: 'hitstopShock', x, y, nx, ny, intensity, metal, lethal,
+        realtime: true, life: 0.16 + this.hitstopRemaining * 1.45 });
+    }
+    Sound.impact(speed, metal, power, fired ? this.hitstopRemaining : 0, lethal);
+    return fired;
+  }
+
   // 衝突イベント（反射が成立した新しい接触ごとに1回）：衝突ダメージ、スチールの味方ダメージ、バンパーの反射
   // 衝突ダメージは「衝突の向きの相対接近速度 ≥ impactDamageMinSpeed」かつ「当てた側が自分から minImpactSpeed 以上で向かっていた」ときだけ
   processPhysicsEvents() {
@@ -3108,32 +3339,44 @@ class Game {
           }
         }
       } else if (ev.type === 'impact') {
-        this.registerChainImpact(ev);
+        const chainCount = this.registerChainImpact(ev);
+        const chainDamageMult = chainCount >= 2 ? Math.min(CONFIG.reflection.chainDamageMax,
+          CONFIG.reflection.chainDamageSecond + (chainCount - 2) * CONFIG.reflection.chainDamageStep) : 1;
         if (ev.approach >= CONFIG.reflection.effectMinSpeed) {
           this.addEffect({ kind: 'impactWave', x: ev.x, y: ev.y, nx: ev.nx, ny: ev.ny,
             power: Util.clamp((ev.approach - CONFIG.reflection.effectMinSpeed) / 950, 0, 1),
             metal: ev.a.def?.slideSound === 'metal' || ev.b.def?.slideSound === 'metal',
             life: 0.22 });
         }
-        Sound.impact(ev.approach, (ev.a.def?.slideSound === 'metal') || (ev.b.def?.slideSound === 'metal')
+        const metallic = (ev.a.def?.slideSound === 'metal') || (ev.b.def?.slideSound === 'metal')
           || ev.a.type === 'tank' || ev.b.type === 'tank' || ev.a.type === 'boss' || ev.b.type === 'boss'
-          || ev.a.type === 'artillery' || ev.b.type === 'artillery');
+          || ev.a.type === 'artillery' || ev.b.type === 'artillery';
         const fast = ev.approach >= C.impactDamageMinSpeed;
+        let impactPower = 0, lethal = false;
         for (const [src, dst, own, bounced] of [[ev.a, ev.b, ev.aOwn, ev.aRicochet], [ev.b, ev.a, ev.bOwn, ev.bRicochet]]) {
           if (!fast || own < C.minImpactSpeed || !src.alive || !dst.alive) continue;
           if (src.isEnemy) {
             // 弾かれた敵から他の敵への高速衝突だけダメージ。通常歩行・押し合いは対象外。
             if (dst.isEnemy && bounced) {
               this.addEffect({ kind: 'burst', x: dst.x, y: dst.y, r: dst.r * 0.5, color: PALETTE.white, life: 0.2 });
-              this.damageEnemy(dst, Impacts.damage(src, ev.approach));
+              const damage = Impacts.damage(src, ev.approach) * chainDamageMult;
+              impactPower = Math.max(impactPower, damage);
+              this.damageEnemy(dst, damage);
+              if (!dst.alive) lethal = true;
             }
           } else if (dst.isEnemy) {
             if (src.def.impactDamageMult > 0) {
               this.addEffect({ kind: 'burst', x: dst.x, y: dst.y, r: dst.r * 0.5, color: PALETTE.white, life: 0.2 });
-              this.damageEnemy(dst, Impacts.damage(src, ev.approach));
+              const damage = Impacts.damage(src, ev.approach) * chainDamageMult;
+              impactPower = Math.max(impactPower, damage);
+              this.damageEnemy(dst, damage);
+              if (!dst.alive) lethal = true;
             }
           } else if (src.def.allyDamageRatio > 0) {
-            this.damageAlly(dst, Impacts.damage(src, ev.approach) * src.def.allyDamageRatio);
+            const damage = Impacts.damage(src, ev.approach) * src.def.allyDamageRatio * chainDamageMult;
+            impactPower = Math.max(impactPower, damage);
+            this.damageAlly(dst, damage);
+            if (!dst.alive) lethal = true;
           }
         }
         for (const ice of [ev.a, ev.b]) {
@@ -3141,30 +3384,42 @@ class Game {
         }
         if (ev.a.anchorsOnImpact) this.onBumperReflect(ev.a);
         if (ev.b.anchorsOnImpact) this.onBumperReflect(ev.b);
+        // 全陣営で同じ衝撃表現。HPダメージが発生しない味方同士の反射も
+        // 接近速度と換算質量から打撃力を求め、ヒットストップ・音・衝撃波に反映する。
+        const invSum = ev.a.invMass + ev.b.invMass;
+        const reducedMass = invSum > 0 ? 1 / invSum : 0;
+        const physicalPower = ev.a.isEnemy === ev.b.isEnemy
+          ? ev.approach * reducedMass * C.impactDamagePerMomentum
+            * C.impactDamageGlobalMult * 2 : 0;
+        this.collisionHitstopFx(ev.x, ev.y, ev.nx, ev.ny, ev.approach,
+          Math.max(impactPower, physicalPower), metallic, lethal);
       } else if (ev.type === 'wallImpact') {
         if (ev.body.def?.ice) this.explodeIce(ev.body);
-        Sound.impact(ev.approach, ev.body.def?.slideSound === 'metal');
-        this.onBumperReflect(ev.body);
+        // バンパーは壁で反射して固定されても壊れない。次にユニットを跳ね返すと壊れる。
+        this.addEffect({ kind: 'ring', x: ev.body.x, y: ev.body.y, r: ev.body.r, color: ev.body.def.color, life: 0.25 });
+        this.collisionHitstopFx(ev.x ?? ev.body.x, ev.y ?? ev.body.y, ev.nx, ev.ny, ev.approach,
+          Impacts.damage(ev.body, ev.approach), ev.body.def?.slideSound === 'metal');
       } else if (ev.type === 'wallCollision') {
         if (ev.body.def?.ice) this.explodeIce(ev.body);
-        Sound.impact(ev.approach, ev.body.def?.slideSound === 'metal');
+        this.collisionHitstopFx(ev.x ?? ev.body.x, ev.y ?? ev.body.y, ev.nx, ev.ny, ev.approach,
+          Impacts.damage(ev.body, ev.approach), ev.body.def?.slideSound === 'metal');
       }
     }
     this.phys.events.length = 0;
   }
 
-  // 1回の射出が生んだ衝突だけを追跡する。連続で異なる敵に接触すると表示が伸びる。
-  // 敵同士の衝突も、直前に味方の射出から伝播した運動であれば連鎖に含める。
-  // 表示のみ：衝突ダメージや報酬は変更しない。
+  // 1回の射出を起点とする連鎖。味方・敵、同一相手への再衝突も数える。
+  // ただし物理側で「新たな接触」になった衝突イベントだけを受け取る。
+  // 2連鎖目からダメージ強化・反射先の微加速。
   registerChainImpact(ev) {
-    if (ev.approach < CONFIG.reflection.chainMinSpeed) return;
+    if (ev.approach < CONFIG.reflection.chainMinSpeed) return 0;
     const valid = b => {
       const c = this.chains.get(b.chainId);
       return c && this.battleTime <= c.until &&
         this.battleTime - c.lastAt <= CONFIG.reflection.chainGap ? c : null;
     };
     const ca = valid(ev.a), cb = valid(ev.b);
-    if (!ca && !cb) return;
+    if (!ca && !cb) return 0;
     let id, c, recipient;
     if (ca && (!cb || ca.lastAt >= cb.lastAt)) {
       id = ev.a.chainId; c = ca; recipient = ev.b;
@@ -3174,15 +3429,22 @@ class Game {
     // 弾かれた相手に同じ連鎖IDを渡し、敵→敵の玉突きを追跡する。
     recipient.chainId = id;
     c.lastAt = this.battleTime;
-    const target = recipient.isEnemy ? recipient : null;
-    if (!target || c.hitIds.has(target.id)) return;
-    c.hitIds.add(target.id);
+    const target = recipient;
     c.count++;
+    if (c.count >= 2 && target.alive && !target.anchored && target.freezeTimer <= 0) {
+      // 微加速は反射直後の速度にのみ一度適用。通常衝突の運動量保存は維持する。
+      const factor = Math.min(CONFIG.reflection.chainSpeedMax,
+        1 + (c.count - 1) * CONFIG.reflection.chainSpeedStep);
+      target.vx *= factor;
+      target.vy *= factor;
+      Physics.capSpeed(target, CONFIG.physics);
+    }
     if (c.count >= 2) {
       this.chainNotice = { count: c.count,
         until: this.battleTime + CONFIG.reflection.chainDisplay };
       this.addEffect({ kind: 'chainPulse', x: ev.x, y: ev.y, r: target.r, life: 0.32 });
     }
+    return c.count;
   }
 
   explodeIce(ice) {
@@ -3209,9 +3471,32 @@ class Game {
         b.vx = 0; b.vy = 0;
         if (b.freezeTimer === 0 && !b.anchored) b.invMass = 1 / b.mass;
       }
-      // アイス本人（同種のアイスを含む）には摩擦半減を適用しない。
-      b._iceSlow = !b.def?.ice && this.allies.some(a => a.alive && a.def.ice && a !== b &&
+      // 破壊したバリアは10ゲーム秒かけてゆっくり回復し、満タンで初めて再展開。
+      if (!b.isEnemy && b.def.shield && b.shieldRecharging) {
+        const shield = b.def.shield;
+        b.shieldHp = Math.min(shield.hp, b.shieldHp + shield.hp * dt / shield.rechargeSeconds);
+        if (b.shieldHp >= shield.hp - 1e-8) {
+          b.shieldHp = shield.hp;
+          b.shieldRecharging = false;
+          this.addEffect({ kind: 'ring', x: b.x, y: b.y, r: b.r, color: PALETTE.blue, life: 0.35 });
+        }
+      }
+      // アイスのオーラ：摩擦だけは味方・敵の両方に、移動速度半減は敵のみに適用。
+      // アイス自身やほかのアイスは対象外。複数のオーラは重複しない。
+      const aura = !b.def?.ice && this.allies.find(a => a.alive && a !== b && a.def.ice &&
         Util.dist(a.x, a.y, b.x, b.y) <= a.def.ice.range);
+      b._iceFrictionFactor = aura ? aura.def.ice.frictionFactor : 1;
+      const enemyAura = !!(b.isEnemy && aura);
+      b._iceSlow = enemyAura;
+      const factor = enemyAura ? aura.def.ice.speedFactor : 1;
+      const previous = b.iceSpeedFactor || 1;
+      if (factor !== previous) {
+        // 速度の変化を入退場時に一度だけ反映。毎フレーム掛け続ける減速を防ぐ。
+        b.vx *= factor / previous;
+        b.vy *= factor / previous;
+        Physics.capSpeed(b, CONFIG.physics);
+        b.iceSpeedFactor = factor;
+      }
     }
   }
   onBumperReflect(b) {
@@ -3219,6 +3504,14 @@ class Game {
     b.reflections++;
     this.addEffect({ kind: 'ring', x: b.x, y: b.y, r: b.r, color: b.def.color, life: 0.3 });
     this.damageAlly(b, b.def.reflectHpCost || 1);
+  }
+  hitShieldBarrier(a, damage) {
+    if (!a.alive || !a.def.shield || a.shieldRecharging || a.shieldHp <= 0) return false;
+    a.shieldHp = Math.max(0, a.shieldHp - damage);
+    if (a.shieldHp <= 0) a.shieldRecharging = true;
+    // バリアが肩代わりしても本体に20%のダメージは伝わる。
+    this.damageAlly(a, damage * a.def.shield.bodyDamageRatio);
+    return true;
   }
   damageAlly(a, n) {
     if (a.takeDamage(n)) this.onAllyDestroyed(a);
@@ -3239,14 +3532,18 @@ class Game {
       Sound.explosion();
     }
     Sound.destroy('enemy', e);
-    this.kills++;
-    this.cost.add(e.reward);
+    // ゲーム結果確定後の余韻中に倒れても報酬や記録は加えない。
+    if (this.state === 'playing') {
+      this.kills++;
+      this.cost.add(e.reward);
+    }
     this.addEffect({ kind: 'burst', x: e.x, y: e.y, r: e.r, color: e.def.color, life: 0.35 });
-    this.addEffect({ kind: 'text', x: e.x, y: e.y, text: `+${e.reward}`, color: COLORS.good, life: 0.8 });
+    // コストの撃破報酬は取得するが、数値ポップアップはHP増減だけに統一する。
   }
   onEnemyBreached(e) {
     Sound.breach();
-    this.breaches++;
+    // 結果確定後は累計突破数を変更せず、演出だけ継続する。
+    if (this.state === 'playing') this.breaches++;
     this.addEffect({ kind: 'breach', x: e.x, y: BATTLE.bottom, life: 0.6 });
   }
   onAllyDestroyed(a) {
@@ -3255,8 +3552,12 @@ class Game {
   }
 
   addEffect(fx) { fx.t = 0; this.effects.push(fx); }
+  advanceRealtimeEffects(dt) {
+    for (const fx of this.effects) if (fx.realtime) fx.t += dt;
+    this.effects = this.effects.filter(fx => fx.t < fx.life);
+  }
   updateEffects(dt) {
-    for (const fx of this.effects) fx.t += dt;
+    for (const fx of this.effects) if (!fx.realtime) fx.t += dt;
     this.effects = this.effects.filter(fx => fx.t < fx.life);
   }
 
@@ -3310,7 +3611,7 @@ const KnockbackTrails = {
  * ===================================================================== */
 const UI = {
   button: { x: 150, y: 549, w: 240, h: 60 },
-  gearButton: { x: 480, y: 3, w: 48, h: 34 },
+  gearButton: { x: 480, y: 15, w: 48, h: 34 },
   settingsLayout: {
     outline: { x: 330, y: 287, w: 117, h: 46 },
     startY: { master: 414, bgm: 523, sfx: 632 },
@@ -3326,6 +3627,9 @@ const UI = {
   holdButton: { x: 372, y: 777, w: 78, h: 108 },
   restartButton: { x: 150, y: 618, w: 240, h: 48 },
   buttons(game) {
+    // 結果発表までの0.7秒間はボタンを表示せず、操作も受け付けない。
+    if ((game.state === 'cleared' || game.state === 'gameover') &&
+        game.stateTime < CONFIG.result.overlayDelay) return [];
     switch (game.state) {
       case 'title':    return [{ ...this.button, label: 'デッキ編成・スタート', action: g => g.openDeckEditor(1, 'new', 'title') }];
       case 'cleared':  return [{ ...this.button, label: game.phase % 5 === 0 ? 'デッキ編成へ' : '次のフェーズへ',
@@ -3339,6 +3643,22 @@ const UI = {
   hit(b, x, y) { return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h; },
   // 設定画面の音量ドラッグを、射出台のドラッグとは独立して追跡する。
   volumeDrag: null,
+  gearTapCount: 0,
+  gearLastTapAt: 0,
+  resetGearSequence() { this.gearTapCount = 0; this.gearLastTapAt = 0; },
+  recordGearTap(game) {
+    if (game.cost.unlimited) { this.resetGearSequence(); return false; }
+    // メニューを開閉してもタップ数は維持し、他のUI操作または1.5秒以上の中断でリセット。
+    const now = performance.now();
+    if (now - this.gearLastTapAt > 1500) this.gearTapCount = 0;
+    this.gearLastTapAt = now;
+    if (++this.gearTapCount < 10) return false;
+    this.resetGearSequence();
+    game.cost.enableUnlimited();
+    Sound.unlock();
+    Sound.unlimitedUnlock();
+    return true;
+  },
   sliderBounds(key) {
     const L = this.settingsLayout;
     return { x: L.sliderX - 19, y: L.startY[key] - 3, w: L.sliderW + 38, h: L.sliderH + 6 };
@@ -3377,6 +3697,9 @@ const UI = {
   deckLayout: { x: 64, top: 246, step: 37, minus: 344, plus: 429, btnW: 39, btnH: 30,
                 confirm: { x: 111, y: 716, w: 318, h: 56 }, cancel: { x: 185, y: 788, w: 170, h: 43 } },
   pointerDown(game, x, y, pointerId = 0) {
+    // 設定ボタン以外を押した場合、10連打の隠しコマンドは最初から数え直す。
+    const gearPressed = this.hit(this.gearButton, x, y);
+    if (!gearPressed || game.settingsRestartConfirm) this.resetGearSequence();
     if (game.state === 'settings') {
       const L = this.settingsLayout;
       // 確認中は裏側の設定や戻るボタンに触れない。
@@ -3391,9 +3714,12 @@ const UI = {
         return true;
       }
       if (this.hit(this.muteButton, x, y)) { Sound.setMuted(!Sound.muted); return true; }
-      if (this.hit(this.gearButton, x, y) || this.hit(L.back, x, y)) {
+      if (gearPressed || this.hit(L.back, x, y)) {
         this.volumeDrag = null;
-        game.closeSettings(); Sound.ui('confirm'); return true;
+        const unlocked = gearPressed && this.recordGearTap(game);
+        game.closeSettings();
+        if (!unlocked) Sound.ui('confirm');
+        return true;
       }
       if (this.hit(L.restart, x, y)) {
         this.volumeDrag = null;
@@ -3417,7 +3743,12 @@ const UI = {
       }
       return true;                                      // 設定画面の下にあるUIを操作させない
     }
-    if (this.hit(this.gearButton, x, y)) { game.openSettings(); Sound.ui('confirm'); return true; }
+    if (gearPressed) {
+      const unlocked = this.recordGearTap(game);
+      game.openSettings();
+      if (!unlocked) Sound.ui('confirm');
+      return true;
+    }
     if (game.state === 'deckedit') {
       const L = this.deckLayout;
       for (let i = 0; i < Object.keys(UNIT_DEFS).length; i++) {
@@ -3476,10 +3807,10 @@ const Pix = {
     return this._rows.get(R);
   },
   chamfer(cx, cy, R, c, a = 255) {
-    // 斜めに切り落とした四隅。世界当たり判定と同じ30%の比率。
+    // 正八角形に近い切り落とし。世界当たり判定と同じ58%の比率。
     R=Math.round(R);
     if (R <= 0) return;
-    const cut=Math.round(R*0.3);
+    const cut=Math.round(R*0.58);
     for(let i=0;i<R*2;i++) {
       const inset=Math.max(0, cut-i, cut-(2*R-1-i));
       this.rect(cx-R+inset, cy-R+i, 2*(R-inset), 1, c, a);
@@ -3546,6 +3877,87 @@ function makeDither() {
 
 const pad2 = n => String(Math.max(0, Math.floor(n))).padStart(2, '0');
 
+// タイトル背景専用のミニ物理デモ。本編のGame/Physicsには触れない。
+// 壁・ユニット間で実際に反射し、衝突地点にダメージ数字と衝撃波を発生させる。
+const TitleBattle = {
+  actors: [], hits: [], elapsed: 0, ready: false,
+  reset() {
+    // 低解像度のドット座標。前衛・後衛を散らして複数方向から衝突させる。
+    const starts = [
+      ['ally','normal',22,38,80,41], ['enemy','normal',67,40,-75,-30],
+      ['ally','bumper',145,39,-100,52], ['enemy','speed',100,43,74,45],
+      ['ally','steel',33,94,92,-59], ['enemy','shooter',115,90,-99,66],
+      ['ally','ice',163,119,-98,-52], ['enemy','scatter',59,124,106,61],
+      ['ally','normal',29,169,108,-69], ['enemy','normal',107,171,-93,68],
+      ['ally','bumper',149,210,-115,-70], ['enemy','speed',70,207,110,67],
+      ['ally','rare',35,229,94,-85], ['enemy','train',137,231,-106,-66],
+    ];
+    this.actors = starts.map(([side, type, x, y, vx, vy], i) => ({
+      side, type, x, y, vx, vy, r: side === 'ally' ? 6 : (type === 'scatter' ? 7 : 5),
+      mass: type === 'steel' ? 2 : 1, flash: 0, history: [], id: i,
+    }));
+    this.hits = [];
+    this.elapsed = 0;
+    this.ready = true;
+  },
+  impact(x, y, power, wall = false) {
+    const strength = Util.clamp(power, 0.35, 2.5);
+    this.hits.push({ x, y, power: strength, t: 0, life: 0.5,
+      value: wall ? null : Math.max(1, Math.round(strength * 2.8)) });
+    if (this.hits.length > 42) this.hits.splice(0, this.hits.length - 42);
+  },
+  update(dt) {
+    if (!this.ready) this.reset();
+    dt = Math.max(0, Math.min(dt, 0.05));
+    this.elapsed += dt;
+    for (const hit of this.hits) hit.t += dt;
+    this.hits = this.hits.filter(hit => hit.t < hit.life);
+    // デモ用の固定上限で移動。端ではバンパーのように強く跳ね返す。
+    for (const a of this.actors) {
+      a.flash = Math.max(0, a.flash - dt);
+      a.history.push([a.x, a.y]);
+      if (a.history.length > 7) a.history.shift();
+      a.x += a.vx * dt;
+      a.y += a.vy * dt;
+      let bounced = false;
+      if (a.x < 9 + a.r) { a.x = 9 + a.r; a.vx = Math.abs(a.vx); bounced = true; }
+      if (a.x > 171 - a.r) { a.x = 171 - a.r; a.vx = -Math.abs(a.vx); bounced = true; }
+      if (a.y < 24 + a.r) { a.y = 24 + a.r; a.vy = Math.abs(a.vy); bounced = true; }
+      if (a.y > 248 - a.r) { a.y = 248 - a.r; a.vy = -Math.abs(a.vy); bounced = true; }
+      if (bounced) {
+        a.flash = 0.10;
+        this.impact(a.x, a.y, Math.hypot(a.vx, a.vy) / 115, true);
+      }
+    }
+    // 円形衝突を質量つきインパルスで解く。接近していない接触は再カウントしない。
+    for (let i = 0; i < this.actors.length; i++) for (let j = i + 1; j < this.actors.length; j++) {
+      const a = this.actors[i], b = this.actors[j];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = a.r + b.r;
+      if (dist >= minDist) continue;
+      const nx = dist > 0.0001 ? dx / dist : 1, ny = dist > 0.0001 ? dy / dist : 0;
+      const overlap = (minDist - dist + 0.01) / 2;
+      a.x -= nx * overlap; a.y -= ny * overlap;
+      b.x += nx * overlap; b.y += ny * overlap;
+      const approaching = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+      if (approaching <= 12) continue;
+      const impulse = 1.92 * approaching / (1 / a.mass + 1 / b.mass);
+      a.vx -= impulse * nx / a.mass; a.vy -= impulse * ny / a.mass;
+      b.vx += impulse * nx / b.mass; b.vy += impulse * ny / b.mass;
+      const power = Util.clamp(approaching / 105, 0.4, 2.4);
+      a.flash = 0.16; b.flash = 0.16;
+      this.impact((a.x + b.x) / 2, (a.y + b.y) / 2, power);
+    }
+    // 軽い減速や停止によってデモが動かなくならないよう、最低速度を維持。
+    for (const a of this.actors) {
+      const sp = Math.hypot(a.vx, a.vy);
+      if (sp > 145) { a.vx *= 145 / sp; a.vy *= 145 / sp; }
+      else if (sp < 45 && sp > 0.01) { a.vx *= 45 / sp; a.vy *= 45 / sp; }
+    }
+  },
+};
+
 const Renderer = {
   clock: 0,
 
@@ -3557,9 +3969,16 @@ const Renderer = {
     if (g.state !== 'playing' && g.stateTime >= 1) return { x: 0, y: 0 };
     const hit = g.effects.some(f => f.kind === 'breach' && f.t < 0.25);
     if (hit) return { x: (frameCount % 2 ? PX : -PX), y: (frameCount % 3 === 0 ? PX : 0) };
+    const shocks = (g.state === 'playing' || g.isResultSettling()) ? g.effects.filter(f => f.kind === 'hitstopShock' && f.t < f.life) : [];
+    if (shocks.length) {
+      const strength = Math.max(...shocks.map(f => f.intensity * (1 - f.t / f.life) ** 2));
+      const amplitude = PX * Math.min(2.7, strength * 2.6);
+      return { x: Math.round(Math.sin(this.clock * 119) * amplitude * 2) / 2,
+               y: Math.round(Math.cos(this.clock * 103) * amplitude * 2) / 2 };
+    }
     // 強い衝突の直後だけ揺れる。時間が経つにつれて小さくなり、短時間で収まる。
     const hits = g.effects.filter(f => f.kind === 'impactWave' && f.power > 0.25 && f.t < 0.13);
-    if (!hits.length || g.state !== 'playing') return { x: 0, y: 0 };
+    if (!hits.length || (g.state !== 'playing' && !g.isResultSettling())) return { x: 0, y: 0 };
     const strength = Math.max(...hits.map(f => f.power * (1 - f.t / 0.13)));
     const magnitude = PX * Math.min(1.4, strength * 1.4);
     return { x: (frameCount % 2 ? -1 : 1) * magnitude,
@@ -3576,6 +3995,16 @@ const Renderer = {
     Pix.rect(0, top, LW, bot - top, PALETTE.navy);
     for (let y = top + 5; y < bot; y += 10)
       for (let x = 5; x < LW; x += 10) Pix.dot(x, y, PALETTE.lavender, 80);
+
+    // メインメニューでは本編と独立した反射・衝突のデモを背景で再生する。
+    // 戦闘状態や実際のHP／コスト／敵召喚には一切影響しない。
+    if (g.state === 'title') {
+      this.titleBattleBackdrop();
+      this.overlay(g);
+      this.muteIcon();
+      this.settingsGear(g);
+      return;
+    }
 
     // 防衛ライン（突破時は赤く点滅）
     const breaching = g.effects.some(f => f.kind === 'breach');
@@ -3602,6 +4031,102 @@ const Renderer = {
     this.overlay(g);
     this.muteIcon();
     this.settingsGear(g);
+    this.screenPulse(g);
+  },
+
+  titleBattleBackdrop() {
+    // メニューを開いている間だけ更新。本編の敵やユニットを消費・破壊しない。
+    TitleBattle.update(Math.min(deltaTime / 1000 || 1 / 60, 0.05));
+    const P = PALETTE;
+    // 軽い囲い線と反射面：戦闘フィールドらしい背景。
+    for (const x of [8, 172]) {
+      Pix.rect(x, 23, 1, 226, P.slate, 105);
+      for (let y = 28; y < 248; y += 13) Pix.rect(x, y, 1, 5, P.blue, 150);
+    }
+    for (const y of [23, 249]) {
+      Pix.rect(9, y, 162, 1, P.slate, 100);
+      for (let x = 13; x < 168; x += 14) Pix.rect(x, y, 6, 1, P.orange, 180);
+    }
+    // 反射軌跡：濃淡の違う短い残像を持たせて衝突方向を見せる。
+    for (const a of TitleBattle.actors) {
+      const d = a.side === 'ally' ? UNIT_DEFS[a.type] : ENEMY_DEFS[a.type];
+      for (let h = 0; h < a.history.length; h++) {
+        const [x, y] = a.history[h];
+        const alpha = Math.round(110 * (h + 1) / a.history.length);
+        Pix.disc(Math.round(x), Math.round(y), Math.max(1, Math.round(a.r * 0.26)), d.color, alpha);
+      }
+    }
+    for (const hit of TitleBattle.hits) {
+      const p = hit.t / hit.life, fade = Math.max(0, 1 - p);
+      const cx = Math.round(hit.x), cy = Math.round(hit.y);
+      const radius = Math.max(2, Math.round(2 + p * (9 + 9 * hit.power)));
+      Pix.ring(cx, cy, radius, hit.value == null ? P.blue : P.yellow, Math.round(220 * fade), 2);
+      if (p < 0.28) Pix.disc(cx, cy, Math.max(1, Math.round(3 * (1 - p / 0.28))), P.white, Math.round(180 * fade));
+      for (let i = 0; i < 8; i++) {
+        const th = i * Math.PI / 4 + hit.x * 0.02;
+        const reach = 3 + p * (10 + hit.power * 8);
+        Pix.line(cx + Math.cos(th) * (reach - 3), cy + Math.sin(th) * (reach - 3),
+          cx + Math.cos(th) * reach, cy + Math.sin(th) * reach,
+          i % 2 ? P.orange : P.white, Math.round(180 * fade));
+      }
+      if (hit.value !== null && p < 0.83) {
+        // 3×5のドット数字で「-ダメージ」を飛ばす（タイトル専用）。
+        const glyphs = {
+          '-': ['000','000','111','000','000'],
+          '0': ['111','101','101','101','111'], '1': ['010','110','010','010','111'],
+          '2': ['111','001','111','100','111'], '3': ['111','001','111','001','111'],
+          '4': ['101','101','111','001','001'], '5': ['111','100','111','001','111'],
+          '6': ['111','100','111','101','111'], '7': ['111','001','010','010','010'],
+          '8': ['111','101','111','101','111'], '9': ['111','101','111','001','111'],
+        };
+        const number = '-' + hit.value;
+        const start = Math.round(cx - number.length * 2 + 1), top = Math.round(cy - 13 - p * 9);
+        // メニュー上のドット数字も1pxの白い縁取りを付ける。
+        for (const [dx, dy, color, alpha] of [
+          [-1, 0, P.white, 210], [1, 0, P.white, 210],
+          [0, -1, P.white, 210], [0, 1, P.white, 210],
+          [0, 0, P.red, 255],
+        ]) {
+          for (let n = 0; n < number.length; n++) {
+            const rows = glyphs[number[n]];
+            if (!rows) continue;
+            for (let yy = 0; yy < 5; yy++) for (let xx = 0; xx < 3; xx++)
+              if (rows[yy][xx] === '1') Pix.dot(start + n * 4 + xx + dx,
+                top + yy + dy, color, Math.round(alpha * fade));
+          }
+        }
+      }
+    }
+    for (const a of TitleBattle.actors) {
+      const cx = Math.round(a.x), cy = Math.round(a.y), r = Math.round(a.r);
+      if (a.side === 'ally') this.unitSprite(UNIT_DEFS[a.type], cx, cy, r, { flash: a.flash > 0 });
+      else this.enemySprite({ def: ENEMY_DEFS[a.type], vx: a.vx, vy: a.vy,
+        hitFlash: a.flash, muzzleFlash: 0 }, cx, cy, r);
+      // メニュー内の敵HPゲージもヒット時に小さく点滅。
+      if (a.side === 'enemy') this.hpBar(cx - r, cy - r - 3, r * 2, a.flash > 0 ? 0.4 : 0.82, P.orange);
+    }
+  },
+
+  screenPulse(g) {
+    if (g.state !== 'playing' && !g.isResultSettling()) return;
+    // プレイヤーの残り突破許容数が1以下になった場合だけ、弱くゆっくり赤く脈動する。
+    const remaining = g.params.breachLimit - g.breaches;
+    if (remaining <= 1) {
+      const wave = 0.5 + 0.5 * Math.sin(this.clock * Math.PI * 2 * 1.25);
+      Pix.rect(0, 0, LW, LH, PALETTE.red, Math.round(9 + 20 * wave));
+      const edgeAlpha = Math.round(18 + 18 * wave);
+      Pix.rect(1, 1, LW - 2, 1, PALETTE.red, edgeAlpha);
+      Pix.rect(1, LH - 2, LW - 2, 1, PALETTE.red, edgeAlpha);
+      Pix.rect(1, 1, 1, LH - 2, PALETTE.red, edgeAlpha);
+      Pix.rect(LW - 2, 1, 1, LH - 2, PALETTE.red, edgeAlpha);
+    }
+    // 強い衝突の瞬間だけごく短い明滅を重ねる（揺れと同様、停止中も実時間で消える）。
+    const shock = g.effects.filter(f => f.kind === 'hitstopShock' && f.t / f.life < 0.20);
+    if (shock.length) {
+      const strength = Math.max(...shock.map(f => f.intensity * (1 - f.t / (f.life * 0.20))));
+      Pix.rect(0, q(BATTLE.top), LW, q(BATTLE.bottom - BATTLE.top),
+        PALETTE.white, Math.round(12 + 25 * strength));
+    }
   },
 
   settingsGear(g) {
@@ -3637,11 +4162,25 @@ const Renderer = {
   panels(g) {
     const bot = q(BATTLE.bottom);
     Pix.rect(0, bot + 1, LW, LH - bot - 1, PALETTE.black);
-    Pix.frame(3, 259, 54, 58, PALETTE.white, PALETTE.black, PALETTE.slate);
+    // 左下は同じ幅・高さの横長パネルを上下に並べる。
+    // 上段：コスト／回復ゲージ。下段：射出台にセットされたユニットの情報。
+    Pix.frame(3, 259, 54, 27, PALETTE.white, PALETTE.black, PALETTE.slate);
+    Pix.frame(3, 289, 54, 27, PALETTE.white, PALETTE.black, PALETTE.slate);
 
-    // 自動回復ゲージ（10ブロック）
-    const filled = Math.floor(Util.clamp(g.cost.regenProgress, 0, 1) * 10);
-    for (let i = 0; i < 10; i++) Pix.rect(7 + i * 4, 287, 3, 2, i < filled ? PALETTE.green : PALETTE.slate);
+    // 自動回復ゲージ（10ブロック）。99/MAX中は赤く点灯し、進行しない。
+    const atMax = g.cost.value >= CONFIG.cost.max;
+    const filled = atMax ? 10 : Math.floor(Util.clamp(g.cost.regenProgress, 0, 1) * 10);
+    for (let i = 0; i < 10; i++) {
+      const color = atMax ? PALETTE.red : (i < filled ? PALETTE.green : PALETTE.slate);
+      Pix.rect(7 + i * 4, 279, 3, 2, color);
+    }
+    // ユニット情報パネルのヘッダ・情報行・役割を区切る。
+    if (g.state === 'playing') {
+      const current = UNIT_DEFS[g.deck.current];
+      Pix.rect(4, 290, 52, 2, current.color);
+      Pix.rect(5, 297, 50, 1, PALETTE.slate);
+      Pix.rect(5, 304, 50, 1, PALETTE.slate);
+    }
   },
 
   hpBar(x, y, w, ratio, c) {
@@ -3723,11 +4262,10 @@ const Renderer = {
       Pix.chamfer(cx, cy, S - 1, o.flash ? P.white : col);
       if (o.flash) return;
       if (R >= 5) {
-        for (let k = cx - S + 2; k < cx + S - 1; k += 3) {           // 上下の縁の縞
-          Pix.dot(k, cy - S + 1, dark); Pix.dot(k, cy + S - 2, dark);
-        }
-        for (let k = cy - S + 2; k < cy + S - 1; k += 3) {           // 左右の縁の縞
-          Pix.dot(cx - S + 1, k, dark); Pix.dot(cx + S - 2, k, dark);
+        const flat = Math.max(1, S - Math.round(S * 0.58));
+        for (let k = -flat + 1; k < flat; k += 3) { // 切り落とした角には描画しない
+          Pix.dot(cx + k, cy - S + 1, dark); Pix.dot(cx + k, cy + S - 2, dark);
+          Pix.dot(cx - S + 1, cy + k, dark); Pix.dot(cx + S - 2, cy + k, dark);
         }
       }
       const I = Math.max(1, S - 3);
@@ -3735,7 +4273,7 @@ const Renderer = {
       Pix.chamfer(cx, cy, Math.max(1,I-1), o.dim ? P.slate : (o.anchored ? P.orange : P.yellow));
       if (o.anchored) {
         Pix.rect(cx - 2, cy, 4, 1, P.black); Pix.rect(cx, cy - 2, 1, 4, P.black);
-        const edge=S-Math.max(1,Math.round(S*0.3));
+        const edge=S-Math.max(1,Math.round(S*0.58));
         for (const [bx, by] of [[cx-edge,cy-S+1],[cx+edge-1,cy-S+1],
                                [cx-edge,cy+S-2],[cx+edge-1,cy+S-2]]) Pix.dot(bx, by, P.silver);
       }
@@ -3779,12 +4317,12 @@ const Renderer = {
     // シールドの有効範囲を薄い水色で表示。外周・味方本体より下の層へ描く。
     // シールドが破壊された場合は塗りも外周も表示しない。
     for (const a of g.allies) {
-      if (a.alive && a.def.shield && a.shieldHp > 0)
+      if (a.alive && a.def.shield && !a.shieldRecharging && a.shieldHp > 0)
         Pix.disc(q(a.x), q(a.y), q(a.def.shield.range), [125, 221, 249], 26);
     }
     for (const a of g.allies) {
       if (a.shooter) Pix.ring(q(a.x), q(a.y), q(a.range), a.def.color, 90, 3, phase);
-      if (a.def.shield && a.shieldHp > 0) Pix.ring(q(a.x), q(a.y), q(a.def.shield.range), PALETTE.blue, 100, 3, phase);
+      if (a.def.shield && !a.shieldRecharging && a.shieldHp > 0) Pix.ring(q(a.x), q(a.y), q(a.def.shield.range), PALETTE.blue, 100, 3, phase);
       if (a.def.ice) Pix.ring(q(a.x), q(a.y), q(a.def.ice.range), PALETTE.white, 65, 5, phase);
       if (a.def.healer) Pix.ring(q(a.x), q(a.y), q(a.def.healer.range), PALETTE.green, 45, 5, phase);
     }
@@ -3793,7 +4331,7 @@ const Renderer = {
       const cx = q(a.x), cy = q(a.y), R = q(a.r);
       this.unitSprite(a.def, cx, cy, R, { flash: a.hitFlash > 0, anchored: a.anchored });
       this.hpBlocks(cx, cy - R - (a.def.sprite === 'normal' ? 6 : 4), a.hp, a.maxHp);
-      if (a.def.shield && a.shieldHp > 0) this.hpBar(cx - R, cy + R + 3, R * 2,
+      if (a.def.shield) this.hpBar(cx - R, cy + R + 3, R * 2,
         a.shieldHp / a.def.shield.hp, PALETTE.blue);
       if (a.freezeTimer > 0) Pix.ring(cx, cy, R + 2, PALETTE.white, 220, 2, phase);
     }
@@ -4065,6 +4603,27 @@ const Renderer = {
           Pix.line(cx + dx * start, cy + dy * start, cx + dx * end, cy + dy * end,
             k % 2 ? PALETTE.yellow : color, Math.round(210 * (1 - p)));
         }
+      } else if (fx.kind === 'hitstopShock') {
+        // 演出だけは実時間で進める。停止中も中心フラッシュ・二重衝撃波・破片が広がる。
+        const cx = q(fx.x), cy = q(fx.y), intensity = fx.intensity;
+        const fade = (1 - p) * (1 - p), outer = Math.round(5 + (14 + 27 * intensity) * p);
+        const color = fx.metal ? PALETTE.peach : PALETTE.white;
+        Pix.ring(cx, cy, outer, color, Math.round(230 * fade), intensity > 0.7 ? 2 : 1);
+        Pix.ring(cx, cy, Math.max(2, Math.round(outer * 0.59)),
+          fx.lethal ? PALETTE.yellow : PALETTE.orange, Math.round(165 * fade));
+        if (p < 0.20) Pix.disc(cx, cy, Math.max(1, Math.round((3 + intensity * 5) * (1 - p / 0.20))),
+          PALETTE.white, Math.round(140 * (1 - p / 0.20)));
+        const nx = fx.nx || 1, ny = fx.ny || 0;
+        const thetaBase = Math.atan2(ny, nx);
+        const rays = intensity > 0.65 ? 12 : 8;
+        for (let k = 0; k < rays; k++) {
+          const a = thetaBase + Math.PI * 2 * k / rays;
+          const reach = (8 + 29 * intensity) * (0.35 + 0.65 * p);
+          const inner = 4 + reach * 0.65;
+          Pix.line(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner,
+            cx + Math.cos(a) * reach, cy + Math.sin(a) * reach,
+            k % 3 === 0 ? PALETTE.yellow : color, Math.round(215 * fade));
+        }
       } else if (fx.kind === 'chainPulse') {
         Pix.ring(q(fx.x), q(fx.y), q(fx.r) + 1 + p * 9,
           PALETTE.yellow, Math.round(225 * (1-p)));
@@ -4132,7 +4691,7 @@ const Renderer = {
     const end = pts[pts.length - 1];
     { const ud = UNIT_DEFS[g.deck.current], ex = q(end.x), ey = q(end.y), er = q(ud.radius);
       if (ud.shape === 'chamfer') {
-        const cut=Math.round(er*0.3);
+        const cut=Math.round(er*0.58);
         const pts=[[ex-er+cut,ey-er],[ex+er-cut,ey-er],[ex+er,ey-er+cut],
                    [ex+er,ey+er-cut],[ex+er-cut,ey+er],[ex-er+cut,ey+er],
                    [ex-er,ey+er-cut],[ex-er,ey-er+cut]];
@@ -4223,7 +4782,27 @@ const Renderer = {
   statusBar(g) {
     const top = q(BATTLE.top);
     Pix.frame(1, 1, LW - 2, top - 2, PALETTE.white, PALETTE.black, PALETTE.slate);
+    this.breachGauge(g);
     this.enemyGauge(g);
+  },
+
+  // 累積突破上限までの残り余裕を緑色で表示（敵残数ゲージと同じ大きさ）。
+  // 数値や「突破」などの文字は表示せず、突破されるたびに右側から減っていく。
+  breachGauge(g) {
+    const limit = g.params.breachLimit;
+    const left = limit > 0 ? Util.clamp((limit - g.breaches) / limit, 0, 1) : 0;
+    const x = 37, y = 3, w = 110, h = 5;
+    Pix.rect(x - 1, y - 1, w + 2, h + 2, PALETTE.white);
+    Pix.rect(x, y, w, h, PALETTE.black);
+    const filled = Math.round(w * left);
+    // 残り3体は1秒周期、2体は0.65秒、1体は0.35秒周期で明滅。
+    const remaining = Math.max(0, limit - g.breaches);
+    const blinkRate = remaining === 3 ? 1 : remaining === 2 ? 1 / 0.65 : 1 / 0.35;
+    if (remaining > 3 || remaining <= 0 || this.blink(blinkRate)) {
+      Pix.rect(x, y, filled, h, PALETTE.green);
+      Pix.rect(x, y, filled, 1, PALETTE.forest);
+    }
+    for (let k = x + 10; k < x + w; k += 11) Pix.rect(k, y + h - 1, 1, 1, PALETTE.black);
   },
 
   // 敵残数ゲージ（ステータス欄の下段。戦闘エリアの位置は変えない）
@@ -4301,24 +4880,50 @@ const Renderer = {
       Pix.frame(q(L.cancel.x), q(L.cancel.y), q(L.cancel.w), q(L.cancel.h), PALETTE.silver, PALETTE.black);
       return;
     }
-    if (g.state === 'playing') return;
-    pg.image(ditherG, 0, 0);
-    const y0 = g.state === 'title' ? 82 : 110;
-    const y1 = g.state === 'gameover' ? 228 : 214;
-    Pix.frame(19, y0, LW - 38, y1 - y0, PALETTE.white, PALETTE.black, PALETTE.slate);
+    if (g.state === 'playing' ||
+        ((g.state === 'cleared' || g.state === 'gameover') && g.stateTime < CONFIG.result.overlayDelay)) return;
+    if (g.state === 'title') {
+      // タイトルでは衝突デモを薄く透かし、説明文とボタンの可読性を守る。
+      Pix.rect(18, 81, LW - 36, 135, PALETTE.black, 193);
+      Pix.rect(19, 82, LW - 38, 1, PALETTE.white);
+      Pix.rect(19, 213, LW - 38, 1, PALETTE.white);
+      Pix.rect(19, 82, 1, 132, PALETTE.white);
+      Pix.rect(160, 82, 1, 132, PALETTE.white);
+      Pix.rect(21, 85, LW - 42, 1, PALETTE.slate, 195);
+      Pix.rect(21, 210, LW - 42, 1, PALETTE.slate, 195);
+    } else {
+      pg.image(ditherG, 0, 0);
+      const y0 = 110, y1 = g.state === 'gameover' ? 228 : 214;
+      Pix.frame(19, y0, LW - 38, y1 - y0, PALETTE.white, PALETTE.black, PALETTE.slate);
+    }
     for (const b of UI.buttons(g)) Pix.frame(q(b.x), q(b.y), q(b.w), q(b.h), PALETTE.white, PALETTE.navy);
   },
 
   /* ---------- 文字層（等倍・ドットフォント） ---------- */
-  txt(s, x, y, size, c, h = LEFT, v = TOP) {
-    textSize(size); textAlign(h, v); noStroke();
+  txt(s, x, y, size, c, h = LEFT, v = TOP, whiteOutline = false) {
+    // 外部フォントの読み込み後も、全画面で同じドットフォントを指定する。
+    textFont(FONT);
+    textSize(size); textAlign(h, v);
+    if (whiteOutline) {
+      // HP増減数字のみ：黒い外影 + 白い縁取り + 本来の文字色。
+      // 拡大された高ダメージ数値でも枠線が同じ比率で拡大される。
+      push();
+      drawingContext.lineJoin = 'round';
+      stroke(0, 0, 0, 220); strokeWeight(Math.max(3, size * 0.22));
+      fill(0); text(s, x + 1, y + 2);
+      stroke(255, 255, 255); strokeWeight(Math.max(1.5, size * 0.11));
+      fill(c[0], c[1], c[2]); text(s, x, y);
+      pop();
+      return;
+    }
+    noStroke();
     fill(0); text(s, x + 2, y + 2);
     fill(c[0], c[1], c[2]); text(s, x, y);
   },
 
-  // コスト獲得・HP回復の数値はHUDより背面に描画し、戦闘エリアの外には出さない。
+  // 敵味方共通のHP増減をHUDより背面に描画し、戦闘エリアの外には出さない。
   floatingTexts(g) {
-    if (g.state !== 'playing') return;
+    if (g.state !== 'playing' && !g.isResultSettling()) return;
     const ctx = drawingContext;
     ctx.save();
     ctx.beginPath();
@@ -4328,15 +4933,18 @@ const Renderer = {
       if (fx.kind !== 'text') continue;
       const p = fx.t / fx.life;
       if (p > 0.7 && !this.blink(12)) continue;
-      this.txt(fx.text, fx.x, fx.y - 12 - p * 24, 16, fx.color, CENTER, CENTER);
+      // 数値が大きいほど文字も大きくする。極端な値はHUDを覆わないよう上限を設定。
+      const size = Util.clamp(14 + 2.4 * (fx.magnitude ?? Math.abs(Number(fx.text))), 14, 36);
+      this.txt(fx.text, fx.x, fx.y - 12 - p * 24, size, fx.color, CENTER, CENTER, true);
     }
     ctx.restore();
   },
 
   texts(g) {
     if (g.state === 'settings') { this.settingsTexts(); return; }  // 設定画面は既存のHUD文字より前面
+    if (g.state === 'title') { this.overlayTexts(g); return; } // メニューでは戦闘HUDを表示しない
     this.floatingTexts(g);  // UIテキストより先に描くことでHUDが必ず前面になる
-    if (g.state === 'playing' && g.chainNotice && g.chainNotice.until > g.battleTime) {
+    if ((g.state === 'playing' || g.isResultSettling()) && g.chainNotice && g.chainNotice.until > g.battleTime) {
       const remaining = g.chainNotice.until - g.battleTime;
       const col = remaining < 0.35 && !this.blink(8) ? PALETTE.peach : PALETTE.yellow;
       this.txt(`${g.chainNotice.count} CHAIN!`, CONFIG.screen.width / 2, BATTLE.top + 22,
@@ -4346,31 +4954,24 @@ const Renderer = {
     const def = UNIT_DEFS[g.deck.current];
     const afford = g.cost.canAfford(def.cost);
 
-    // ステータス
-    // 上段：フェーズ・突破（コストは下部パネルのみに表示）／下段：敵残数ゲージ
-    const cols = [
-      { label: 'フェーズ', value: pad2(g.phase), color: PALETTE.white },
-      { label: '突破', value: `${g.breaches}/${g.params.breachLimit}`,
-        color: g.breaches >= g.params.breachLimit - 1 ? PALETTE.red : PALETTE.white },
-    ];
-    const cw = (W - 24) / cols.length;
-    cols.forEach((c, i) => {
-      const x = 18 + cw * i;
-      textSize(12); const lw = textWidth(c.label);
-      this.txt(c.label, x, 13, 12, PALETTE.silver);
-      this.txt(c.value, x + lw + 8, 6, 22, c.color);
-    });
+    // ステータス：上段は緑の残り耐久ゲージ、右横は残り/最大HP。下段は敵残数。
+    // 数字はゲージと設定ボタンの間に収め、点滅中も常時読めるようにする。
+    this.txt('フェーズ', 18, 13, 12, PALETTE.silver);
+    this.txt(pad2(g.phase), 76, 7, 20, PALETTE.white);
+    const maxHp = g.params.breachLimit;
+    const remainHp = Math.max(0, maxHp - g.breaches);
+    this.txt(`${remainHp}/${maxHp}`, 474, 10, 11,
+      remainHp <= 3 ? PALETTE.green : PALETTE.white, RIGHT, TOP);
     this.txt('ENEMIES', 18, 38, 12, PALETTE.silver);
     this.txt(`${g.remainingEnemies}/${g.totalEnemies}`, 452, 37, 14,
       g.remainingEnemies === 0 ? PALETTE.green : PALETTE.white);
 
     // 下部パネル
     this.txt('防衛ライン', 8, BATTLE.bottom - 20, 11, PALETTE.orange);
-    this.txt('コスト', 21, 798, 12, PALETTE.silver);
-    this.txt(pad2(g.cost.value), 21, 814, 30, afford ? PALETTE.white : PALETTE.red);
-    this.txt(`${CONFIG.cost.regenInterval}秒ごとに+${CONFIG.cost.regenAmount}`, 21, 876, 11, PALETTE.silver);
-    this.txt(afford ? `${def.name} ${def.cost}` : `あと${def.cost - Math.floor(g.cost.value)}必要`,
-      21, 910, 12, afford ? PALETTE.green : PALETTE.red);
+    this.txt('コスト', 21, 787, 12, PALETTE.silver);
+    this.txt(pad2(g.cost.value), 21, 801, 29, afford ? PALETTE.white : PALETTE.red);
+    // 左下の下段パネルは現在のデッキカードを参照し、射出・HOLD後も即更新。
+    if (g.state === 'playing') this.launchUnitInfo(g);
     this.txt('NEXT', 495, 788, 12, PALETTE.silver, CENTER, TOP);
     { const b = UI.holdButton, cx = b.x + b.w / 2;
       this.txt('HOLD', cx, 786, 12, PALETTE.silver, CENTER, TOP);
@@ -4394,28 +4995,48 @@ const Renderer = {
     this.overlayTexts(g);
   },
 
+  // 左下のコストパネルと同サイズのユニット情報カード。
+  launchUnitInfo(g) {
+    const d = UNIT_DEFS[g.deck.current];
+    if (!d) return;
+    const role = {
+      normal: '射撃', bumper: '高速反射', steel: '重量衝突', iron: '強打・重量',
+      shield: '弾を防ぐ', heal: '接触回復', healer: '回復射撃', rare: '軽量射撃',
+      bomb: '範囲爆発', ice: '凍結・減速',
+    }[g.deck.current] || '特殊';
+    // 162×81pxの横長パネル内：名前 → HP・重さ → コスト・役割。
+    this.txt(d.name, 90, 874, d.name.length >= 6 ? 11 : 14, d.color, CENTER, TOP);
+    this.txt('HP', 18, 897, 10, PALETTE.silver);
+    this.txt(d.hp === 0 ? '—' : String(d.hp), 63, 896, 12, PALETTE.white, RIGHT);
+    this.txt('重さ', 78, 897, 10, PALETTE.silver);
+    this.txt(String(d.mass), 159, 896, 12, PALETTE.white, RIGHT);
+    this.txt('COST', 18, 919, 11, PALETTE.silver);
+    this.txt(String(d.cost), 72, 918, 13, PALETTE.yellow, RIGHT);
+    this.txt(role, 159, 919, role.length >= 5 ? 10 : 11, PALETTE.green, RIGHT);
+  },
+
   overlayTexts(g) {
     if (g.state === 'settings') { this.settingsTexts(); return; }
     if (g.state === 'deckedit') {
       this.deckEditorTexts(g);
       return;
     }
-    if (g.state === 'playing') return;
+    if (g.state === 'playing' ||
+        ((g.state === 'cleared' || g.state === 'gameover') && g.stateTime < CONFIG.result.overlayDelay)) return;
     const W = CONFIG.screen.width;
     if (g.state === 'title') {
       this.txt('スリングディフェンス', W / 2, 300, 34, PALETTE.yellow, CENTER, CENTER);
-      this.txt('物理演算タワーディフェンス', W / 2, 344, 14, PALETTE.silver, CENTER, CENTER);
       const lines = [
-        '射出台の味方を下へ引いて離すと飛ぶ',
+        '射出台のユニットを下へ引いて離すと飛ぶ',
         '引く距離で強さ、向きで方向が決まる',
-        '味方10種類から8枚のデッキを編集できます',
+        'ユニット10種類から8枚のデッキを編集できます',
         'HOLDで1体保留・入れ替え（射出ごとに1回）',
-        `敵が防衛ラインを${CONFIG.phase.breachLimit}体越えると負け`,
+        `全フェーズ累計${CONFIG.phase.breachLimit}体突破されると負け`,
       ];
-      lines.forEach((s, i) => this.txt(s, 84, 384 + i * 32, 15, PALETTE.white));
+      lines.forEach((s, i) => this.txt(s, 84, 368 + i * 32, 15, PALETTE.white));
     } else if (g.state === 'cleared') {
       this.txt(`フェーズ ${pad2(g.phase)} クリア`, W / 2, 392, 30, PALETTE.green, CENTER, CENTER);
-      this.txt(`撃破 ${pad2(g.kills)}  突破 ${g.breaches}/${g.params.breachLimit}`, W / 2, 440, 15, PALETTE.white, CENTER, CENTER);
+      this.txt(`撃破 ${pad2(g.kills)}  累計突破 ${g.breaches}/${g.params.breachLimit}`, W / 2, 440, 15, PALETTE.white, CENTER, CENTER);
       const nx = Difficulty.forPhase(g.phase + 1);
       this.txt(`持ち越しコスト：${Math.floor(g.cost.value)}`, W / 2, 474, 18, PALETTE.yellow, CENTER, CENTER);
       this.txt(`次のフェーズ：敵の予算 ${nx.budget}／同時召喚上限 ${Difficulty.eventCap(g.phase + 1)}`, W / 2, 506, 13, PALETTE.silver, CENTER, CENTER);
@@ -4484,11 +5105,11 @@ const Renderer = {
     });
     const chosen = UNIT_DEFS[g.deckSelected] || UNIT_DEFS.normal;
     const descriptions = {
-      normal: '射程3・0.6秒ごとに1ダメージ', bumper: '高速衝突で1.5倍反射、使い捨て',
+      normal: '射程3・0.6秒ごとに1ダメージ', bumper: 'コスト1・壁で壊れず、対ユニット反射で消滅',
       steel: '質量2の打撃、敵を弾く', iron: '超重量・強力な衝突と吹き飛ばし',
-      shield: '範囲5で弾を防ぐ・シールドHP8', heal: '接触相手を敵味方問わず1回復、消滅',
-      healer: '範囲4・3秒ごとに味方を1回復', rare: 'HP6・射撃ダメージ0.7',
-      bomb: '投擲して範囲3.5に敵味方4ダメージ', ice: '範囲5の摩擦半減・衝突で3秒凍結',
+      shield: 'HP4・バリアHP8、破壊後10秒で再展開', heal: '接触相手を敵味方問わず1.5回復、消滅',
+      healer: '範囲4・2.9秒ごとに味方を2回復', rare: 'HP6・射撃ダメージ0.7',
+      bomb: '投擲して範囲3.5に敵味方4ダメージ', ice: '範囲5の敵の摩擦・速度半減、衝突で3秒凍結',
     };
     this.txt(`選択: ${chosen.name}`, 270, 639, 15, PALETTE.yellow, CENTER, CENTER);
     this.txt(descriptions[g.deckSelected] || '', 270, 663, 13, PALETTE.white, CENTER, CENTER);
@@ -4567,7 +5188,10 @@ const Input = {
 
     document.addEventListener('touchend', () => Sound.unlock(), { passive: true });
     document.addEventListener('keydown', e => {
-      if (e.key === 'm' || e.key === 'M') Sound.setMuted(!Sound.muted);
+      if (e.key === 'm' || e.key === 'M') {
+        Sound.setMuted(!Sound.muted);
+        if (!Sound.muted) Sound.unlock();
+      }
       if (e.key === 'h' || e.key === 'H' || e.key === 'Shift') game.tryHold();
       if (e.key === 'Escape') {
         if (game.state === 'settings') {
@@ -4615,7 +5239,12 @@ function setup() {
   textFont(FONT);
   Preferences.init();
   Sound.init();
-  if (document.fonts && document.fonts.load) document.fonts.load("16px 'DotGothic16'").catch(() => {});
+  // 開始メニューからBGMの再生を試す。自動再生が禁止された端末では最初のタップで解放される。
+  if (!Sound.muted) Sound.unlock();
+  // フォントが非同期で読み込まれても次フレームのテキスト描画へ適用される。
+  if (document.fonts && document.fonts.load) {
+    document.fonts.load("16px 'DotGothic16'").then(() => textFont(FONT)).catch(() => {});
+  }
 
   pg = createGraphics(LW, LH);
   pg.pixelDensity(1);
@@ -4639,9 +5268,8 @@ function draw() {
   game.update(dt);
   if (!game.launcher.aiming && Sound.drag) Sound.dragEnd('cancel');   // 停止漏れの保険
   Sound.updateSlide(game);                                            // 滑走音（1フレーム1回）
-  // 戦闘中から設定画面へ移った間も、ゲーム進行は停止したままBGMだけ継続。
-  const bgmState = game.state === 'settings' && game.settingsReturn === 'playing' ? 'playing' : game.state;
-  Sound.updateBgm(bgmState);                                         // 音声時間で先行予約するBGM
+  // タイトル表示時から、画面の切り替えに関係なくBGMを連続再生する。
+  Sound.updateBgm(game.state);                                       // 音声時間で先行予約するBGM
   Renderer.clock += Math.min(dt, 0.25);
 
   background(0);
