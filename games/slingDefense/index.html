@@ -615,13 +615,17 @@ const Difficulty = {
 /* 乱数（シードを固定すると同じ召喚予定を再現できる） */
 function makeRng(seed) {
   let a = (seed >>> 0) || 1;
-  return () => {
+  const rng = () => {
     a = (a + 0x6D2B79F5) >>> 0;
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+  // 途中セーブ後も敵の出現位置の乱数列を引き継ぐ。
+  rng.getState = () => a;
+  rng.setState = state => { a = state >>> 0; };
+  return rng;
 }
 
 /* =====================================================================
@@ -3091,6 +3095,7 @@ class Game {
     this.choiceCandidates = UnitDraft.choices(
       this.acquiredTypes, this.choiceCandidates, this.choiceMode === 'new');
     this.choiceRerolls--;
+    SaveManager.persist(this);  // 選択画面で閉じても、リロール済みの候補・残数を維持する。
     return true;
   }
 
@@ -3115,7 +3120,8 @@ class Game {
   }
 
   // mode：'new' = 新しいゲーム（初期コスト）、'next' = 次のフェーズ（今のコストを引き継ぐ）、
-  //       'retry' = 同じフェーズの再挑戦（そのフェーズ開始時のコストに戻す）
+  //       'retry' = 同じフェーズの再挑戦（そのフェーズ開始時のコストに戻す）、
+  //       'restore' = セーブから再開（回数は消費せずフェーズ開始時へ戻す）
   startPhase(n, mode = 'new') {
     // 残り0回での再挑戦は、直接呼び出されてもゲーム状態を変更しない。
     if (mode === 'retry' && this.retriesRemaining <= 0) return false;
@@ -3137,7 +3143,7 @@ class Game {
     this.trails = [];
     // 突破数はゲーム全体で累積。クリア後は維持し、再挑戦では開始時点まで戻す。
     const breaches = mode === 'next' ? this.breaches
-      : mode === 'retry' ? (this.phaseStartBreaches ?? 0) : 0;
+      : (mode === 'retry' || mode === 'restore') ? (this.phaseStartBreaches ?? 0) : 0;
     this.breaches = breaches;
     this.phaseStartBreaches = breaches;
     this.kills = 0;
@@ -3148,13 +3154,14 @@ class Game {
     this.hold = null;          // HOLD枠のユニット種類（空なら null）
     this.holdUsed = false;     // 射出するまでHOLDは1回だけ
     const carry = mode === 'next' ? this.cost.value
-      : mode === 'retry' ? (this.phaseStartCost ?? this.params.initialCost)
+      : (mode === 'retry' || mode === 'restore') ? (this.phaseStartCost ?? this.params.initialCost)
       : this.params.initialCost;
     this.cost.reset(carry);
     this.phaseStartCost = carry;                        // 再挑戦用に、このフェーズ開始時のコストを覚えておく
     if (CONFIG.deck.resetOnPhaseStart) this.deck.reset();
     this.healShots = [];
-    const seed = CONFIG.waves.seed ?? Math.floor(Math.random() * 2 ** 31);
+    const seed = (mode === 'restore' && Number.isSafeInteger(this.waveSeed))
+      ? this.waveSeed : (CONFIG.waves.seed ?? Math.floor(Math.random() * 2 ** 31));
     this.waveSeed = seed;                              // 確認用：同じシードなら同じ召喚予定
     this.spawner.reset(n, makeRng(seed + n * 7919));
     this.launcher.cancel();
@@ -3173,6 +3180,8 @@ class Game {
       // 結果表示までの0.7秒は戦場の反射・衝撃を続けるため、ヒットストップも引き継ぐ。
       if (s !== 'cleared' && s !== 'gameover') this.hitstopRemaining = 0;
     }
+    // ステージ・画面遷移を即時保存。戦闘中は別途定期的に保存する。
+    SaveManager.persist(this);
     // メニュー・編成・結果画面への遷移ではBGMを止めない。音声の停止はミュート／タブ非表示時のみ。
   }
 
@@ -3627,6 +3636,147 @@ class Game {
   }
   get totalEnemies() { return this.spawner.total; }
 }
+
+/* =====================================================================
+ * 11.3 SaveManager — フェーズ開始時のチェックポイント保存
+ *   戦闘中のユニットや飛行中の弾は保存せず、再起動時は同フェーズの最初から。
+ *   フェーズクリア／敗北／ユニット選択画面は画面状態を保存して不正な再抽選を防ぐ。
+ * ===================================================================== */
+const SaveManager = {
+  key: 'sling-defense-run-v2',
+  version: 2,
+  intervalMs: 10000,
+  lastSavedAt: 0,
+  warned: false,
+
+  snapshot(g) {
+    if (!g || g.state === 'title') return null;
+    // 設定中なら直前の状態を保持。戦闘中だった場合はフェーズ開始から再開する。
+    const state = g.state === 'settings' ? (g.settingsReturn || 'playing') : g.state;
+    if (!['playing', 'cleared', 'gameover', 'unitselect'].includes(state)) return null;
+    return {
+      version: this.version,
+      phase: g.phase,
+      state,
+      acquiredTypes: g.acquiredTypes.slice(),
+      // 現在値ではなく開始時の値を保存。中断によって突破・消費を確定させない。
+      phaseStartBreaches: g.phaseStartBreaches,
+      phaseStartCost: g.phaseStartCost ?? CONFIG.phase.initialCost,
+      // クリア／敗北の結果画面で必要な状態。戦闘中の再開には使用しない。
+      resultBreaches: g.breaches,
+      resultCost: g.cost.unlimited ? g.phaseStartCost : g.cost.value,
+      retriesRemaining: g.retriesRemaining,
+      waveSeed: g.waveSeed ?? null,
+      // 3択の途中で閉じても候補やリロール残数は変えない。
+      choiceCandidates: state === 'unitselect' ? g.choiceCandidates.slice() : [],
+      choiceRerolls: state === 'unitselect' ? g.choiceRerolls : 0,
+      choiceTargetPhase: state === 'unitselect' ? g.choiceTargetPhase : null,
+      choiceMode: state === 'unitselect' ? g.choiceMode : null,
+      choiceReturn: state === 'unitselect' ? g.choiceReturn : null,
+    };
+  },
+  persist(g) {
+    const data = this.snapshot(g);
+    if (!data) return false;
+    try {
+      localStorage.setItem(this.key, JSON.stringify(data));
+      this.lastSavedAt = Date.now();
+      return true;
+    } catch (error) {
+      // プライベートブラウズや保存容量制限では、セーブ不可でもゲームは続行する。
+      if (!this.warned) {
+        console.warn('Sling Defense: チェックポイントの保存に失敗しました', error);
+        this.warned = true;
+      }
+      return false;
+    }
+  },
+  autosave(g) {
+    if (g && g.state !== 'title' && Date.now() - this.lastSavedAt >= this.intervalMs)
+      this.persist(g);
+  },
+  validate(d) {
+    if (!d || d.version !== this.version ||
+        !['playing', 'cleared', 'gameover', 'unitselect'].includes(d.state) ||
+        !Number.isSafeInteger(d.phase) || d.phase < 1 ||
+        !Array.isArray(d.acquiredTypes) || d.acquiredTypes.length > CONFIG.deck.maxTypes ||
+        d.acquiredTypes.some(t => !Object.prototype.hasOwnProperty.call(UNIT_DEFS, t)) ||
+        !Number.isInteger(d.retriesRemaining) || d.retriesRemaining < 0 ||
+        d.retriesRemaining > CONFIG.phase.retryLimit ||
+        !Number.isFinite(d.phaseStartCost) || d.phaseStartCost < 0 ||
+        d.phaseStartCost > CONFIG.cost.max ||
+        !Number.isInteger(d.phaseStartBreaches) || d.phaseStartBreaches < 0 ||
+        d.phaseStartBreaches >= CONFIG.phase.breachLimit ||
+        (d.waveSeed !== null && d.waveSeed !== undefined && !Number.isSafeInteger(d.waveSeed)))
+      return false;
+    if (d.state === 'unitselect') {
+      if (!Array.isArray(d.choiceCandidates) || !d.choiceCandidates.length ||
+          d.choiceCandidates.length > CONFIG.deck.choiceCount ||
+          new Set(d.choiceCandidates).size !== d.choiceCandidates.length ||
+          d.choiceCandidates.some(t => !Object.prototype.hasOwnProperty.call(UNIT_DEFS, t)) ||
+          d.acquiredTypes.length >= CONFIG.deck.maxTypes ||
+          !Number.isInteger(d.choiceTargetPhase) || d.choiceTargetPhase < 1 ||
+          !['new', 'next'].includes(d.choiceMode) ||
+          !Number.isInteger(d.choiceRerolls) || d.choiceRerolls < 0 ||
+          d.choiceRerolls > CONFIG.deck.rerollsPerChoice) return false;
+    } else if (!d.acquiredTypes.length) return false;
+    if (d.state === 'playing' && d.phaseStartBreaches >= CONFIG.phase.breachLimit) return false;
+    if (['cleared', 'gameover', 'unitselect'].includes(d.state) &&
+        (!Number.isFinite(d.resultCost) || d.resultCost < 0 ||
+         d.resultCost > CONFIG.cost.max || !Number.isInteger(d.resultBreaches) ||
+         d.resultBreaches < 0 || d.resultBreaches > CONFIG.phase.breachLimit)) return false;
+    return true;
+  },
+  restoreData(g, d) {
+    if (!this.validate(d)) throw new Error('互換性のないセーブデータです');
+    g.acquiredTypes = d.acquiredTypes.slice();
+    g.deckCounts = UnitDraft.counts(g.acquiredTypes.length ? g.acquiredTypes : ['normal']);
+    g.deck = new Deck(DeckRules.expand(g.deckCounts));
+    g.retriesRemaining = d.retriesRemaining;
+    g.phaseStartCost = d.phaseStartCost;
+    g.phaseStartBreaches = d.phaseStartBreaches;
+    g.waveSeed = d.waveSeed;
+    // 隠しコスト無制限はページを閉じると解除（従来どおり）。
+    g.cost.unlimited = false;
+
+    if (d.state === 'playing') {
+      // ここでステージを初期化するので、敵の位置・弾・チェインもすべて初期状態に戻る。
+      return g.startPhase(d.phase, 'restore');
+    }
+    // 中断地点がクリア・敗北・ユニット選択中なら、画面を復元する。
+    // クリア画面から次へ進んだときにコストや突破数を正しく引き継げるようにする。
+    g.phase = d.phase;
+    g.params = Difficulty.forPhase(d.phase);
+    g.cost.reset(d.resultCost);
+    g.breaches = d.resultBreaches;
+    g.state = d.state;
+    g.stateTime = (d.state === 'cleared' || d.state === 'gameover')
+      ? CONFIG.result.overlayDelay : 0;
+    if (d.state === 'unitselect') {
+      g.choiceCandidates = d.choiceCandidates.slice();
+      g.choiceRerolls = d.choiceRerolls;
+      g.choiceTargetPhase = d.choiceTargetPhase;
+      g.choiceMode = d.choiceMode;
+      g.choiceReturn = d.choiceReturn;
+    }
+    return true;
+  },
+  load(g) {
+    try {
+      const raw = localStorage.getItem(this.key);
+      if (!raw) return false;
+      const data = JSON.parse(raw);
+      if (!this.validate(data)) throw new Error('セーブデータの形式が不正です');
+      const restored = this.restoreData(g, data);
+      if (restored) this.lastSavedAt = Date.now();
+      return restored;
+    } catch (error) {
+      // 保存されていない端末・壊れたデータでは通常のタイトルから開始。
+      console.warn('Sling Defense: チェックポイントを復元できませんでした', error);
+      return false;
+    }
+  },
+};
 
 /* =====================================================================
  * 11.5 KnockbackTrails — 射出・衝突で弾かれたユニットの後方に残る灰色の小さな波紋
@@ -5301,8 +5451,14 @@ const Input = {
       }
     });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) { game.launcher.cancel(); Sound.stopBgm(); }
+      if (document.hidden) {
+        game.launcher.cancel();
+        SaveManager.persist(game);
+        Sound.stopBgm();
+      }
     });
+    window.addEventListener('pagehide', () => SaveManager.persist(game));
+    window.addEventListener('beforeunload', () => SaveManager.persist(game));
 
     // ページのスクロール・拡大を防止
     document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
@@ -5352,6 +5508,7 @@ function setup() {
 
   computeView();
   game = new Game();
+  SaveManager.load(game);                         // セーブがあればそのフェーズの開始状態を自動復元
   Input.attach(c.elt);
   if (window.ResizeObserver) new ResizeObserver(() => fitCanvas()).observe(document.getElementById('game'));
   lastTime = performance.now();
@@ -5364,6 +5521,7 @@ function draw() {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
   game.update(dt);
+  SaveManager.autosave(game);                     // 定期的にチェックポイントを保存（実際の戦闘途中状態は保存しない）
   if (!game.launcher.aiming && Sound.drag) Sound.dragEnd('cancel');   // 停止漏れの保険
   Sound.updateSlide(game);                                            // 滑走音（1フレーム1回）
   // タイトル表示時から、画面の切り替えに関係なくBGMを連続再生する。
